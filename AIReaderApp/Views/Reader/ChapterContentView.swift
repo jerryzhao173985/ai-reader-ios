@@ -571,30 +571,45 @@ struct ChapterWebView: UIViewRepresentable {
                     try {
                         const selection = window.getSelection();
                         if (selection && selection.rangeCount > 0) {
-                            const text = selection.toString();  // Keep exact selection, don't trim
+                            const text = selection.toString();
 
-                            // Skip if empty/whitespace-only or unchanged
+                            // Skip if empty/whitespace-only
                             if (!text || text.trim().length === 0) return;
-                            if (text === lastSelection) return;
-
-                            lastSelection = text;
 
                             const range = selection.getRangeAt(0);
 
-                            // Get context
-                            const textContent = document.body.textContent || '';
-                            const startOffset = getTextOffset(range.startContainer, range.startOffset);
-                            const endOffset = getTextOffset(range.endContainer, range.endOffset);
+                            // Get clean text (excludes marker text like [1], [2], [3])
+                            const textContent = getCleanTextContent();
+
+                            // Calculate offsets in clean text, snapping if boundary is inside a marker
+                            // Example: "emotion[11][9]" selected → snaps to "emotion"
+                            const startOffset = getTextOffset(range.startContainer, range.startOffset, 'start');
+                            const endOffset = getTextOffset(range.endContainer, range.endOffset, 'end');
+
+                            // Validate: if offsets are invalid (e.g., selection was entirely markers), skip
+                            if (startOffset >= endOffset) {
+                                console.log('[Selection] Invalid range after snapping (marker-only selection), skipping');
+                                return;
+                            }
+
+                            // Use snapped text from clean content for consistency with offsets
+                            // This ensures "emotion[11]" selection sends "emotion" with matching offsets
+                            const snappedText = textContent.substring(startOffset, endOffset);
+
+                            // Skip if snapped text is unchanged (prevent redundant messages)
+                            // Compare snappedText, not raw text - "emotion[11]" and "emotion[11][9]" both snap to "emotion"
+                            if (snappedText === lastSelection) return;
+                            lastSelection = snappedText;
 
                             const contextBefore = textContent.substring(Math.max(0, startOffset - 100), startOffset);
                             const contextAfter = textContent.substring(endOffset, Math.min(textContent.length, endOffset + 100));
 
                             // Log for debugging
-                            console.log('[Selection] text:', text.substring(0, 50), 'length:', text.length);
+                            console.log('[Selection] snapped text:', snappedText.substring(0, 50), 'length:', snappedText.length, 'offsets:', startOffset, '-', endOffset);
 
                             if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.textSelection) {
                                 window.webkit.messageHandlers.textSelection.postMessage({
-                                    text: text,
+                                    text: snappedText,
                                     startOffset: startOffset,
                                     endOffset: endOffset,
                                     contextBefore: contextBefore,
@@ -668,15 +683,86 @@ struct ChapterWebView: UIViewRepresentable {
                     }
                 }, { passive: true });
 
-                function getTextOffset(node, offset) {
+                // Helper: Check if a text node is inside a marker element (should be excluded from offset calculations)
+                // Markers are <sup> elements with classes like "highlight-marker-5" or "analysis-marker"
+                function isMarkerTextNode(textNode) {
+                    let el = textNode.parentElement;
+                    while (el && el !== document.body) {
+                        // Only match our specific marker patterns (not arbitrary classes containing these strings)
+                        if (el.tagName === 'SUP' && el.className) {
+                            // Match: highlight-marker-N (where N is a number) or analysis-marker
+                            if (/^highlight-marker-\\d+$/.test(el.className) ||
+                                el.className === 'analysis-marker') {
+                                return true;
+                            }
+                        }
+                        el = el.parentElement;
+                    }
+                    return false;
+                }
+
+                // Get clean text content excluding marker text (for context extraction)
+                // This ensures context offsets match getTextOffset() calculations
+                function getCleanTextContent() {
+                    let text = '';
+                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+                    while (walker.nextNode()) {
+                        if (!isMarkerTextNode(walker.currentNode)) {
+                            text += walker.currentNode.textContent;
+                        }
+                    }
+                    return text;
+                }
+
+                // Get text offset in clean text (excluding markers)
+                //
+                // When selection boundary lands inside a marker like [11], we must snap to real text:
+                //   - boundary='start': snap FORWARD to next real text (for selection START)
+                //   - boundary='end': snap BACKWARD to previous real text (for selection END)
+                //
+                // Example: "emotion[11][9][7] more" - user selects "emotion[11][9"
+                //   - END boundary is inside "[9]" marker
+                //   - Snap backward → returns position at end of "emotion" (offset 7)
+                //   - Result: selection = "emotion" (correct!)
+                //
+                // This prevents the bug where target node is skipped (markers are skipped)
+                // and the function would return total document length → entire chapter highlighted
+                function getTextOffset(node, offset, boundary) {
+                    boundary = boundary || 'end';  // Default: snap backward (safe for end boundaries)
+
                     let totalOffset = 0;
+                    let lastRealTextEnd = 0;  // Position at end of last real (non-marker) text
                     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
 
                     while (walker.nextNode()) {
-                        if (walker.currentNode === node) {
+                        const currentNode = walker.currentNode;
+
+                        if (isMarkerTextNode(currentNode)) {
+                            // Target is inside a marker - must snap to real text boundary
+                            if (currentNode === node) {
+                                if (boundary === 'start') {
+                                    // START boundary: snap forward to next real text
+                                    while (walker.nextNode()) {
+                                        if (!isMarkerTextNode(walker.currentNode)) {
+                                            return totalOffset;  // Start of next real text
+                                        }
+                                    }
+                                    return totalOffset;  // No more real text, return current position
+                                } else {
+                                    // END boundary: snap backward to end of previous real text
+                                    return lastRealTextEnd;
+                                }
+                            }
+                            continue;  // Skip marker text in offset counting
+                        }
+
+                        // Normal text node
+                        if (currentNode === node) {
                             return totalOffset + offset;
                         }
-                        totalOffset += walker.currentNode.textContent.length;
+
+                        totalOffset += currentNode.textContent.length;
+                        lastRealTextEnd = totalOffset;
                     }
                     return totalOffset;
                 }
@@ -702,12 +788,20 @@ struct ChapterWebView: UIViewRepresentable {
 
                 function applyHighlight(id, startOffset, endOffset, markerNum, analysisCount) {
                     // Find text nodes and their positions
+                    // IMPORTANT: Skip marker text nodes to prevent "offset drift" when multiple highlights are applied
                     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
                     const textNodes = [];
                     let totalOffset = 0;
 
                     while (walker.nextNode()) {
                         const node = walker.currentNode;
+
+                        // Skip marker text nodes - they shouldn't affect offset calculation
+                        // This prevents drift when applying multiple highlights in sequence
+                        if (isMarkerTextNode(node)) {
+                            continue;
+                        }
+
                         const nodeStart = totalOffset;
                         const nodeEnd = totalOffset + node.textContent.length;
 
