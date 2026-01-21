@@ -908,6 +908,9 @@ struct ChapterWebView: UIViewRepresentable {
         private var hasRestoredScroll = false
         /// Scroll position to restore after HTML reload (preserves position during highlight updates)
         private var pendingScrollPosition: CGFloat?
+        /// Flag to track when scroll restoration is in progress (during asyncAfter delay)
+        /// Prevents saving new position before the scheduled restoration completes
+        private var isRestoringScroll = false
         /// Last handled marker update ID to prevent duplicate handling
         var lastHandledMarkerId: UUID?
 
@@ -917,11 +920,42 @@ struct ChapterWebView: UIViewRepresentable {
 
         func resetScrollRestoration() {
             hasRestoredScroll = false
+            isRestoringScroll = false
+            pendingScrollPosition = nil
         }
 
         /// Save current scroll position before reloading HTML
+        /// IMPORTANT: Don't save if restoration is in progress or pending - prevents race condition
+        /// where rapid state changes could save Y=0 during the asyncAfter restoration window
         func saveScrollPositionForReload() {
-            pendingScrollPosition = webView?.scrollView.contentOffset.y
+            // If restoration is in progress (asyncAfter scheduled but not fired), skip
+            // This prevents saving Y=0 during the 100ms window before restoration completes
+            guard !isRestoringScroll else {
+                #if DEBUG
+                print("[WebView] Scroll save skipped - restoration in progress")
+                #endif
+                return
+            }
+
+            // If we already have a pending position, don't overwrite it
+            // This happens when updateUIView is called multiple times before didFinish
+            guard pendingScrollPosition == nil else {
+                #if DEBUG
+                print("[WebView] Scroll save skipped - pending restoration exists: \(pendingScrollPosition!)")
+                #endif
+                return
+            }
+
+            let currentY = webView?.scrollView.contentOffset.y ?? 0
+
+            // Save current position (valid as long as page is loaded)
+            if let webView = webView, webView.scrollView.contentSize.height > 0 {
+                pendingScrollPosition = currentY
+                #if DEBUG
+                print("[WebView] Scroll position saved: \(currentY)")
+                #endif
+            }
+            // If contentSize is 0, page is loading - don't save anything
         }
 
         /// Inject JavaScript to update marker and highlight color without reloading HTML
@@ -987,21 +1021,40 @@ struct ChapterWebView: UIViewRepresentable {
             // Restore scroll position after content loads
             // Priority: pendingScrollPosition (from reload) > initialScrollOffset (from chapter open)
             let targetOffset: CGFloat
+            let source: String
             if let pending = pendingScrollPosition {
                 targetOffset = pending
                 pendingScrollPosition = nil  // Clear after use
+                source = "pending"
             } else if !hasRestoredScroll && parent.initialScrollOffset > 0 {
                 targetOffset = parent.initialScrollOffset
                 hasRestoredScroll = true
+                source = "initial"
             } else {
+                #if DEBUG
+                print("[WebView] didFinish - no scroll restoration needed")
+                #endif
                 return  // No scroll restoration needed
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            #if DEBUG
+            print("[WebView] Scroll restoration scheduled: \(targetOffset) (source: \(source))")
+            #endif
+
+            // Mark restoration in progress to prevent saveScrollPositionForReload() from
+            // saving Y=0 during the 100ms window before restoration actually fires
+            isRestoringScroll = true
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 webView.scrollView.setContentOffset(
                     CGPoint(x: 0, y: targetOffset),
                     animated: false
                 )
+                // Restoration complete - allow new saves
+                self?.isRestoringScroll = false
+                #if DEBUG
+                print("[WebView] Scroll restoration completed: \(targetOffset)")
+                #endif
             }
         }
 
