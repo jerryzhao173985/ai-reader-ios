@@ -1,0 +1,266 @@
+// SettingsView.swift
+// Settings interface for customizing reader appearance and API configuration
+//
+// Features: theme selection, font settings, margin controls, API key entry
+
+import SwiftUI
+
+struct SettingsView: View {
+    @Environment(SettingsManager.self) private var settings
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showingAPIKeyInfo = false
+    @State private var apiKeyInput = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                // Appearance Section
+                Section("Appearance") {
+                    themePicker
+                    fontFamilyPicker
+                    fontSizeSlider
+                    lineSpacingSlider
+                    marginSizeSlider
+                }
+
+                // Preview Section
+                Section("Preview") {
+                    previewText
+                }
+
+                // AI Settings Section
+                Section {
+                    apiKeyField
+                } header: {
+                    Text("AI Settings")
+                } footer: {
+                    Text("Your API key is stored locally and never shared. It's used for AI-powered text analysis.")
+                }
+
+                // Reset Section
+                Section {
+                    Button("Reset to Defaults") {
+                        withAnimation {
+                            settings.resetToDefaults()
+                        }
+                    }
+                    .foregroundStyle(.red)
+                }
+
+                // About Section
+                Section("About") {
+                    LabeledContent("Version", value: "1.0.0")
+                    LabeledContent("Build", value: "1")
+
+                    Link(destination: URL(string: "https://platform.openai.com/api-keys")!) {
+                        Label("Get OpenAI API Key", systemImage: "key.fill")
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                apiKeyInput = settings.openAIAPIKey
+            }
+        }
+    }
+
+    // MARK: - Theme Picker
+    @MainActor
+    private var themePicker: some View {
+        HStack {
+            Text("Theme")
+
+            Spacer()
+
+            HStack(spacing: 12) {
+                ForEach(SettingsManager.Theme.allCases) { theme in
+                    Button {
+                        withAnimation {
+                            settings.theme = theme
+                        }
+                    } label: {
+                        VStack(spacing: 4) {
+                            Circle()
+                                .fill(theme.backgroundColor)
+                                .overlay(
+                                    Circle()
+                                        .stroke(theme.textColor.opacity(0.3), lineWidth: 1)
+                                )
+                                .frame(width: 30, height: 30)
+
+                            Text(theme.displayName)
+                                .font(.caption2)
+                                .foregroundStyle(settings.theme == theme ? .primary : .secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .overlay {
+                        if settings.theme == theme {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .offset(x: 10, y: -10)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Font Family Picker
+    @MainActor
+    private var fontFamilyPicker: some View {
+        Picker("Font", selection: Binding(
+            get: { settings.fontFamily },
+            set: { settings.fontFamily = $0 }
+        )) {
+            ForEach(SettingsManager.FontFamily.allCases) { font in
+                Text(font.displayName)
+                    .font(font.font(size: 14))
+                    .tag(font)
+            }
+        }
+    }
+
+    // MARK: - Font Size Slider
+    @MainActor
+    private var fontSizeSlider: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Font Size")
+                Spacer()
+                Text("\(Int(settings.fontSize))pt")
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Image(systemName: "textformat.size.smaller")
+                    .foregroundStyle(.secondary)
+
+                Slider(
+                    value: Binding(
+                        get: { settings.fontSize },
+                        set: { settings.fontSize = $0 }
+                    ),
+                    in: 12...32,
+                    step: 1
+                )
+
+                Image(systemName: "textformat.size.larger")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Line Spacing Slider
+    @MainActor
+    private var lineSpacingSlider: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Line Spacing")
+                Spacer()
+                Text("\(Int(settings.lineSpacing))pt")
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { settings.lineSpacing },
+                    set: { settings.lineSpacing = $0 }
+                ),
+                in: 0...20,
+                step: 2
+            )
+        }
+    }
+
+    // MARK: - Margin Size Slider
+    @MainActor
+    private var marginSizeSlider: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Margins")
+                Spacer()
+                Text("\(Int(settings.marginSize))pt")
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { settings.marginSize },
+                    set: { settings.marginSize = $0 }
+                ),
+                in: 8...48,
+                step: 4
+            )
+        }
+    }
+
+    // MARK: - Preview Text
+    @MainActor
+    private var previewText: some View {
+        VStack(alignment: .leading, spacing: settings.lineSpacing) {
+            Text("The quick brown fox jumps over the lazy dog.")
+                .font(settings.readerFont)
+                .foregroundStyle(settings.theme.textColor)
+
+            Text("This is how your book will look with the current settings.")
+                .font(settings.readerFont)
+                .foregroundStyle(settings.theme.textColor.opacity(0.8))
+        }
+        .padding(settings.marginSize)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(settings.theme.backgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(settings.theme.textColor.opacity(0.1), lineWidth: 1)
+        )
+    }
+
+    // MARK: - API Key Field
+    @MainActor
+    private var apiKeyField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                SecureField("OpenAI API Key", text: $apiKeyInput)
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Button {
+                    settings.openAIAPIKey = apiKeyInput
+                } label: {
+                    Text("Save")
+                        .font(.subheadline)
+                }
+                .disabled(apiKeyInput == settings.openAIAPIKey)
+            }
+
+            if !settings.openAIAPIKey.isEmpty {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("API Key configured")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+#Preview {
+    SettingsView()
+        .environment(SettingsManager())
+}
