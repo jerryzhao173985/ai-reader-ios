@@ -21,115 +21,84 @@
       "added_at": "2026-01-20T08:01:00.000000"
     },
     {
-      "type": "correction",
-      "content": "Text selection in WKWebView requires JavaScript injection to enable user-select CSS and handle touch events properly",
-      "added_at": "2026-01-20T06:41:00.000000"
-    },
-    {
       "type": "decision",
       "content": "AI analysis results display as inline side notes [1] [2] [3] in chapter text. Analysis panel only opens when tapping a side note marker, not automatically after analysis completes.",
       "added_at": "2026-01-20T09:55:00.000000"
+    },
+    {
+      "type": "technical_fix",
+      "content": "WKWebView text selection: (1) Requires JavaScript injection for user-select CSS and touch events. (2) Race condition fix - defer marker/colorHex updates when hasActiveTextSelection=true to prevent HTML reload clearing selection. (3) Scroll position preservation - compute hash before async ops, only update if content changed.",
+      "added_at": "2026-01-21T00:18:20.403830"
+    },
+    {
+      "type": "technical_fix",
+      "content": "Marker text selection drift fix: Side note markers [1][2][3] must be excluded from offset calculations. Added isMarkerTextNode() to skip markers in getTextOffset() and applyHighlight(). Added getCleanTextContent() for context extraction. Added snapDirection parameter - when selection boundary is inside marker, snap to word boundary (prevents entire chapter being highlighted).",
+      "added_at": "2026-01-21T17:35:00.000000"
     }
   ],
   "manual_memories": [],
   "realtime_memories": [
     {
-      "type": "technical_fix",
-      "content": "Race condition fix: When analysis completes while user has active text selection, defer BOTH marker updates AND colorHex updates (hasActiveTextSelection=true) to prevent HTML reload from clearing user's text selection. Apply deferred updates only when selection is cleared.",
-      "added_at": "2026-01-21T00:18:20.403830",
-      "source": "consolidated"
-    },
-    {
-      "type": "technical_fix",
-      "content": "Scroll position preservation: loadHighlightsForCurrentChapter() was triggering SwiftUI re-renders that reset scroll position. Fixed by computing hash before async operations and checking if content actually changed before updating.",
-      "added_at": "2026-01-20T21:23:11.411581",
-      "source": "consolidated"
-    },
-    {
       "type": "completed_task",
-      "content": "GitHub repository created: https://github.com/jerryzhao173985/ai-reader-ios - 31 files committed including all Swift sources, Xcode project files, Package.resolved for SPM dependencies. No API keys leaked (stored in UserDefaults at runtime). .claude/ folder included for project memory.",
+      "content": "GitHub repository: https://github.com/jerryzhao173985/ai-reader-ios - All Swift sources, Xcode project files, SPM dependencies. API keys stored in UserDefaults at runtime (not in repo).",
       "added_at": "2026-01-21T07:50:03.108888",
       "source": "consolidated"
     },
     {
       "type": "claude_response",
-      "content": "**BUILD SUCCEEDED** ✓\n\n---\n\n`★ Insight ─────────────────────────────────────`\n**Complete Fix - Three Layers of Protection:**\n\n1. **Layer 1 (updateUIView)**: Added early return when `hasActiveTextSelec",
-      "added_at": "2026-01-21T12:29:10.541928",
+      "content": "Memory consolidated: 20 → 8 entries. All marker text selection drift fixes are complete and build succeeds.",
+      "added_at": "2026-01-21T17:41:22.236658",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "Great, now I want you to carefully read over all of the new code you just wrote and other existing code you just modified with \"fresh eyes,\" looking super carefully for any obvious bugs, errors, probl",
-      "added_at": "2026-01-21T12:29:10.541946",
+      "content": "Do you think you really fix the issue as I pointed out and the core of drift fix and also guideline rule for [1][2][3]... ❯ There are a few issues I need properly understand and fix 1. sometimes after",
+      "added_at": "2026-01-21T17:41:22.236836",
       "source": "realtime_capture"
     },
     {
       "type": "claude_response",
-      "content": "All fixes have been implemented and verified. Here's a summary of what was fixed:\n\n`★ Insight ─────────────────────────────────────`\n**Race Condition Root Cause:**\nThe original fix only checked `hasAc",
-      "added_at": "2026-01-21T12:41:49.933269",
+      "content": "Let me trace through the EXACT scenarios you described to verify the fix is complete:\n\n---\n\n**Scenario 1: User selects \"emotion[11]\" or \"emotion[11][\"**\n\nDOM structure:\n```html\n...text... emotion<sup ",
+      "added_at": "2026-01-21T17:46:22.238017",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "Recall and regan your knowledge from your fresh eyes look of what you identified and have tried to fix, see ig this is really useful necessary and helpful and defoinitely needed and really as you deem",
-      "added_at": "2026-01-21T12:41:49.933383",
+      "content": "Currnet workspace fixes (git diff) and also the staged changes (git diff --staged) please look thoroughly and carefully to what the changes relaly do adn really fix and see if all of these are truly u",
+      "added_at": "2026-01-21T17:46:22.238034",
       "source": "realtime_capture"
     },
     {
       "type": "claude_response",
-      "content": "Let me give you an honest, critical assessment.\n\n---\n\n## Honest Assessment: Is `isTouchingScreen` Really Needed?\n\n**The `askFollowUpQuestion()` fix was definitely needed:**\n```swift\n// BEFORE: Directl",
-      "added_at": "2026-01-21T12:44:55.386369",
+      "content": "---\n\n## **Final Verification Summary**\n\nAll changes are now staged together as ONE atomic fix. Here's what the complete fix does:\n\n| Component | Lines | Purpose |\n|-----------|-------|---------|\n| `is",
+      "added_at": "2026-01-21T17:50:33.217815",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "you mentioned this that 95%+ of real-world cases are you really sure about this sio if that is that rare I do not want to add in too much complexity as complexity too much maybe not needed at all if n",
-      "added_at": "2026-01-21T12:44:55.386389",
+      "content": "As this is very important now I want you to carefully read over all of the new code you just wrote and other existing code you just modified with \"fresh eyes,\" looking super carefully for any obvious ",
+      "added_at": "2026-01-21T17:50:33.217833",
       "source": "realtime_capture"
     },
     {
       "type": "claude_response",
-      "content": "---\n\n## Summary: What I Kept vs. Removed\n\n**Removed (unnecessary complexity):**\n- `isTouchingScreen` flag in ReaderViewModel\n- `onTouchStateChanged` callback\n- `touchState` message handler\n- JavaScrip",
-      "added_at": "2026-01-21T12:49:55.419888",
+      "content": "Now let me trace through a complete scenario to verify end-to-end correctness:\n\n---\n\n## **Fresh Eyes Review - Complete Trace**\n\n**Scenario**: Chapter has existing highlight on \"emotion\" with marker [5",
+      "added_at": "2026-01-21T18:01:16.974371",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "Check the git diff if all is good again and be useful help and essentiuasl here and use fresh eyes to see if there is any optential issues or errors and also if your removal just now did well and good",
-      "added_at": "2026-01-21T12:49:55.419906",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "---\n\n## Final Review - All Changes Are Clean and Targeted\n\n`★ Insight ─────────────────────────────────────`\n**Three Targeted Fixes (No Over-Engineering):**\n\n1. **`askFollowUpQuestion()` deferral fix*",
-      "added_at": "2026-01-21T12:53:33.121153",
+      "content": "CHECK AGAIN the previous thing I mentioned here as they are very important check you really udnerstand (1) and (2) and properly fixed 1. sometimes after a word, a sentence there could be a few side no",
+      "added_at": "2026-01-21T18:01:16.974401",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "So consider all aspects of the flow that we have considered and good point you identidfied a new crucial bug, do we still miss anything, please amke the feature complete and correct and best with what",
-      "added_at": "2026-01-21T12:53:33.121170",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "---\n\n## Comprehensive Status Summary\n\n### Selection Preservation Fixes - ✅ Complete\n\nAll three targeted fixes are in place:\n\n1. **`askFollowUpQuestion()` deferral fix** (lines 450-458): Uses same defe",
-      "added_at": "2026-01-21T12:59:02.759461",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "---\n\n## Complete Fresh Eyes Review - All Fixes Summary\n\n`★ Insight ─────────────────────────────────────`\n**Three Critical Bugs Fixed:**\n\n| Bug | Impact | Fix |\n|-----|--------|-----|\n| `askFollowUpQu",
-      "added_at": "2026-01-21T13:03:05.782476",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "›now seems all good please git add commit with very good message of the work and push",
-      "added_at": "2026-01-21T13:03:05.782492",
+      "content": "what improvements you can make as you thoroughly analyzed and udnerstand everything and know all what design and flow is best improve directly",
+      "added_at": "2026-01-21T18:03:14.528855",
       "source": "realtime_capture"
     }
   ],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-21T13:03:05.782493"
+  "updated_at": "2026-01-21T18:03:14.528861"
 }
