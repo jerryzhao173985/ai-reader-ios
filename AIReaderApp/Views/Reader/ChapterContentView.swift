@@ -47,6 +47,7 @@ struct ChapterContentView: View {
                                 highlights: viewModel.currentChapterHighlights,
                                 initialScrollOffset: viewModel.scrollOffset,
                                 onTextSelected: { text, range, context, offsets in
+                                    let wasActive = viewModel.hasActiveTextSelection
                                     viewModel.selectedText = text
                                     viewModel.selectionRange = range
                                     selectionContext = context
@@ -54,6 +55,11 @@ struct ChapterContentView: View {
                                     viewModel.showingContextMenu = !text.isEmpty
                                     // Track active selection to defer updates
                                     viewModel.hasActiveTextSelection = !text.isEmpty
+
+                                    // If selection was just cleared (user tapped elsewhere), apply deferred updates
+                                    if wasActive && !viewModel.hasActiveTextSelection {
+                                        viewModel.applyDeferredMarkerUpdates()
+                                    }
                                 },
                                 onHighlightTapped: { highlight in
                                     // Scroll to the highlight and open panel
@@ -620,6 +626,7 @@ struct ChapterWebView: UIViewRepresentable {
                 let longPressTimer = null;
                 document.addEventListener('touchstart', function(e) {
                     isSelecting = true;
+
                     // Start polling during touch
                     if (selectionCheckInterval) clearInterval(selectionCheckInterval);
                     selectionCheckInterval = setInterval(sendSelection, 300);
@@ -641,6 +648,7 @@ struct ChapterWebView: UIViewRepresentable {
                 document.addEventListener('touchend', function() {
                     isSelecting = false;
                     clearTimeout(longPressTimer);
+
                     // Continue checking for a bit after touch ends
                     setTimeout(function() {
                         if (selectionCheckInterval) {
@@ -653,6 +661,7 @@ struct ChapterWebView: UIViewRepresentable {
                 document.addEventListener('touchcancel', function() {
                     isSelecting = false;
                     clearTimeout(longPressTimer);
+
                     if (selectionCheckInterval) {
                         clearInterval(selectionCheckInterval);
                         selectionCheckInterval = null;

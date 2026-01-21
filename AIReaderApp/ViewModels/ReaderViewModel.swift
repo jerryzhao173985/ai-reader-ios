@@ -129,6 +129,13 @@ final class ReaderViewModel {
     // MARK: - Navigation
     func goToChapter(_ index: Int) {
         guard index >= 0 && index < chapterCount else { return }
+
+        // Apply any deferred updates for current chapter before leaving
+        // This ensures colorHex is saved even if user had active selection
+        if !pendingMarkerUpdatesQueue.isEmpty {
+            applyDeferredMarkerUpdates()
+        }
+
         currentChapterIndex = index
         scrollOffset = 0
         _cachedChapters = nil  // Invalidate cache to refresh from SwiftData
@@ -443,9 +450,19 @@ final class ReaderViewModel {
                                 )
                                 analysis.highlight = highlight
                                 highlight.analyses.append(analysis)
-                                highlight.colorHex = AnalysisType.customQuestion.colorHex
+                                // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
                                 modelContext.insert(analysis)
                                 try? modelContext.save()
+
+                                // Use same deferral logic as saveAnalysis() for colorHex and marker updates
+                                let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
+                                if hasActiveTextSelection {
+                                    pendingMarkerUpdatesQueue.append(markerUpdate)
+                                } else {
+                                    highlight.colorHex = AnalysisType.customQuestion.colorHex
+                                    try? modelContext.save()
+                                    pendingMarkerUpdate = markerUpdate
+                                }
 
                                 // Add the first turn to thread
                                 addTurnToThread(analysis: analysis, question: question, answer: result)
@@ -539,11 +556,17 @@ final class ReaderViewModel {
 
     // MARK: - Text Selection
     func handleTextSelection(_ text: String, range: NSRange) {
+        let wasActive = hasActiveTextSelection
         selectedText = text
         selectionRange = range
         showingContextMenu = !text.isEmpty
         // Track active selection to defer marker updates
         hasActiveTextSelection = !text.isEmpty
+
+        // If selection was just cleared (user tapped elsewhere), apply deferred updates
+        if wasActive && !hasActiveTextSelection {
+            applyDeferredMarkerUpdates()
+        }
     }
 
     func clearSelection() {
