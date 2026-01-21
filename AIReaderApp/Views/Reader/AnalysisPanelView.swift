@@ -88,7 +88,7 @@ struct AnalysisPanelView: View {
 
                 Spacer()
 
-                // Quick analysis menu (excluding types that need user input)
+                // Quick analysis menu (excluding types that need user input) + Delete option
                 Menu {
                     ForEach(AnalysisType.quickAnalysisTypes, id: \.self) { type in
                         Button {
@@ -101,27 +101,55 @@ struct AnalysisPanelView: View {
                             Label(type.displayName, systemImage: type.iconName)
                         }
                     }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            viewModel.deleteHighlight(highlight)
+                        }
+                    } label: {
+                        Label("Delete Highlight", systemImage: "trash")
+                    }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .foregroundStyle(settings.theme.accentColor)
                 }
             }
 
+            // Selected text box (delete via ellipsis menu above)
             Text(highlight.selectedText)
                 .font(.subheadline)
                 .foregroundStyle(settings.theme.textColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(hex: highlight.colorHex ?? "#ffff00")?.opacity(0.2) ?? Color.yellow.opacity(0.2))
                 )
 
-            // Quick Analysis Buttons (excluding types that need user input)
+            // Quick Analysis Buttons + Delete
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(AnalysisType.quickAnalysisTypes.prefix(4), id: \.self) { type in
                         analysisTypeButton(type, highlight: highlight)
                     }
+
+                    // Delete button (same style as analysis buttons)
+                    Button {
+                        viewModel.deleteHighlight(highlight)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.red.opacity(0.15))
+                            )
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

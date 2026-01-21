@@ -238,12 +238,17 @@ final class ReaderViewModel {
     }
 
     func deleteHighlight(_ highlight: HighlightModel) {
+        let highlightId = highlight.id
+
+        // Delete from database
         modelContext.delete(highlight)
         try? modelContext.save()
         loadHighlightsForCurrentChapter()
 
-        if selectedHighlight?.id == highlight.id {
+        // Clear selection if this highlight was selected
+        if selectedHighlight?.id == highlightId {
             selectedHighlight = nil
+            analysisResult = nil
             showingAnalysisPanel = false
         }
     }
