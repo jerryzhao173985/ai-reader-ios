@@ -245,10 +245,11 @@ final class ReaderViewModel {
         try? modelContext.save()
         loadHighlightsForCurrentChapter()
 
-        // Clear selection if this highlight was selected
+        // Clear all selection-related state if this highlight was selected
         if selectedHighlight?.id == highlightId {
             selectedHighlight = nil
             analysisResult = nil
+            isAnalyzing = false
             showingAnalysisPanel = false
         }
     }
@@ -298,13 +299,15 @@ final class ReaderViewModel {
                                 analysisResult = result
                                 isAnalyzing = false
                             }
-                            // Save analysis to SwiftData for this specific highlight
-                            saveAnalysis(
-                                to: highlight,
-                                type: type,
-                                prompt: question ?? text,
-                                response: result
-                            )
+                            // Only save if highlight wasn't deleted while analysis was running
+                            if currentChapterHighlights.contains(where: { $0.id == highlightId }) {
+                                saveAnalysis(
+                                    to: highlight,
+                                    type: type,
+                                    prompt: question ?? text,
+                                    response: result
+                                )
+                            }
                         }
                         // Clean up job mapping
                         highlightToJobMap.removeValue(forKey: highlightId)
@@ -443,34 +446,37 @@ final class ReaderViewModel {
                                 isAnalyzing = false
                             }
 
-                            if let analysis = existingAnalysis {
-                                // Add to existing thread
-                                addTurnToThread(analysis: analysis, question: question, answer: result)
-                            } else {
-                                // Create new analysis with first Q&A
-                                let analysis = AIAnalysisModel(
-                                    analysisType: .customQuestion,
-                                    prompt: question,
-                                    response: result
-                                )
-                                analysis.highlight = highlight
-                                highlight.analyses.append(analysis)
-                                // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
-                                modelContext.insert(analysis)
-                                try? modelContext.save()
-
-                                // Use same deferral logic as saveAnalysis() for colorHex and marker updates
-                                let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
-                                if hasActiveTextSelection {
-                                    pendingMarkerUpdatesQueue.append(markerUpdate)
+                            // Only save if highlight wasn't deleted while analysis was running
+                            if currentChapterHighlights.contains(where: { $0.id == highlightId }) {
+                                if let analysis = existingAnalysis {
+                                    // Add to existing thread
+                                    addTurnToThread(analysis: analysis, question: question, answer: result)
                                 } else {
-                                    highlight.colorHex = AnalysisType.customQuestion.colorHex
+                                    // Create new analysis with first Q&A
+                                    let analysis = AIAnalysisModel(
+                                        analysisType: .customQuestion,
+                                        prompt: question,
+                                        response: result
+                                    )
+                                    analysis.highlight = highlight
+                                    highlight.analyses.append(analysis)
+                                    // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
+                                    modelContext.insert(analysis)
                                     try? modelContext.save()
-                                    pendingMarkerUpdate = markerUpdate
-                                }
 
-                                // Add the first turn to thread
-                                addTurnToThread(analysis: analysis, question: question, answer: result)
+                                    // Use same deferral logic as saveAnalysis() for colorHex and marker updates
+                                    let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
+                                    if hasActiveTextSelection {
+                                        pendingMarkerUpdatesQueue.append(markerUpdate)
+                                    } else {
+                                        highlight.colorHex = AnalysisType.customQuestion.colorHex
+                                        try? modelContext.save()
+                                        pendingMarkerUpdate = markerUpdate
+                                    }
+
+                                    // Add the first turn to thread
+                                    addTurnToThread(analysis: analysis, question: question, answer: result)
+                                }
                             }
                         }
                         // Clean up job mapping
