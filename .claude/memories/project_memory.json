@@ -2,109 +2,50 @@
   "memories": [
     {
       "type": "preference",
-      "content": "User prefers building/testing on physical iPhone 15 Pro Max (❄️) connected via WiFi rather than simulators. Device ID: 00008130-001659882E43001C",
+      "content": "Build/test on physical iPhone 15 Pro Max via WiFi (Device ID: 00008130-001659882E43001C). User prefers complete, defensively correct code over minimal code if it aids maintainer understanding.",
       "added_at": "2026-01-20T07:20:00.000000"
     },
     {
       "type": "completed_feature",
-      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView for rendering. Features: Library view, TOC navigation, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions). Three-column NavigationSplitView adapted for iPhone. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
-      "added_at": "2026-01-20T07:20:00.000000"
+      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library, TOC navigation, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions), inline side note markers [1][2][3], delete highlight via ellipsis menu + quick action button. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
+      "added_at": "2026-01-21T21:00:00.000000"
     },
     {
-      "type": "correction",
-      "content": "SwiftData requires explicit modelContext.insert() for ALL related objects (book, chapters, TOC entries) - unlike Core Data which auto-inserts relationships",
+      "type": "technical",
+      "content": "SwiftData requires explicit modelContext.insert() for ALL related objects. EPUB spine includes front matter - findFirstContentChapter() skips items with <500 chars plainText.",
       "added_at": "2026-01-20T08:01:00.000000"
     },
     {
-      "type": "correction",
-      "content": "EPUB spine includes front matter (cover, titlepage, copyright) before actual chapters. ReaderViewModel.findFirstContentChapter() skips items with <500 chars plainText to start at real content",
-      "added_at": "2026-01-20T08:01:00.000000"
+      "type": "technical",
+      "content": "WKWebView architecture: JS injection for marker/color updates (not loadHTMLString to avoid flicker). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection flag + pendingMarkerUpdatesQueue. Scroll preservation: pendingScrollPosition NOT cleared after restoration, only on user manual scroll (scrollViewWillBeginDragging). Marker offset drift fix: isMarkerTextNode() + getTextOffset boundary snapping.",
+      "added_at": "2026-01-22T00:20:00.000000"
     },
     {
       "type": "decision",
-      "content": "AI analysis results display as inline side notes [1] [2] [3] in chapter text. Analysis panel only opens when tapping a side note marker, not automatically after analysis completes.",
-      "added_at": "2026-01-20T09:55:00.000000"
+      "content": "AI analysis runs in background. Panel only opens when tapping inline side note marker [1][2][3], not automatically after analysis completes. Marker click handler: traverse up to parent highlight-{uuid} span (markers have highlight-marker-N class). injectMarkerUpdate() creates .analysis-marker but HTML reload overwrites it - effectively dead code.",
+      "added_at": "2026-01-22T00:20:00.000000"
     },
     {
-      "type": "technical_fix",
-      "content": "WKWebView text selection: (1) Requires JavaScript injection for user-select CSS and touch events. (2) Race condition fix - defer marker/colorHex updates when hasActiveTextSelection=true to prevent HTML reload clearing selection. (3) Scroll position preservation - compute hash before async ops, only update if content changed.",
-      "added_at": "2026-01-21T00:18:20.403830"
-    },
-    {
-      "type": "technical_fix",
-      "content": "Marker text selection drift fix: Side note markers [1][2][3] excluded from offset calculations via isMarkerTextNode() (checks SUP tag + regex /^highlight-marker-\\d+$/). getTextOffset() has boundary parameter: 'start' snaps forward, 'end' snaps backward. Prevents entire-chapter-highlight bug when selection boundary lands inside marker.",
-      "added_at": "2026-01-21T17:35:00.000000"
+      "type": "decision",
+      "content": "Delete highlight: reset ALL 4 selection-related states (selectedHighlight, analysisResult, isAnalyzing, showingAnalysisPanel) for complete state cleanup and symmetry with selectHighlight(). These form a logical unit - clearing partially creates implicit dependencies.",
+      "added_at": "2026-01-22T00:20:00.000000"
     }
   ],
   "manual_memories": [],
   "realtime_memories": [
     {
       "type": "claude_response",
-      "content": "Memory consolidated: 10 → 7 entries. Merged GitHub repo into completed_feature, removed conversation fragments.",
-      "added_at": "2026-01-21T20:21:12.812547",
+      "content": "Memory consolidated: 11 → 6 entries. Removed conversation fragments, merged WKWebView patterns, added today's insights about dead code and state management philosophy.",
+      "added_at": "2026-01-22T00:23:19.011128",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "Good and very good and I think that almost fixed it, but this is very weird and have a minor issue is that when I focus on one word to selection quite a few times with all for exmaple like \"emotion[11",
-      "added_at": "2026-01-21T20:21:12.812585",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "**Fixed the scroll-to-top race condition.**\n\n**What was happening:**\n\nDuring rapid parallel operations:\n```\n1. updateUIView called → saveScrollPositionForReload() saves Y=500 → loadHTMLString() starts",
-      "added_at": "2026-01-21T20:27:18.351478",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "Check very carefully and fix properly and as suitable and as fit in the codebase as you see on this your most recent commit as it could be correct but I need you to make sure not justy \"likely\" and yo",
-      "added_at": "2026-01-21T20:27:18.351499",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "Ready to test. The three commits together provide a complete fix for:\n1. **f409257** - Marker text selection drift and entire-chapter highlight bug\n2. **9d22fcd** - Scroll-to-top race condition during",
-      "added_at": "2026-01-21T20:34:54.144168",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "OKAY now I reproduced that isssue just now that I in parallel and continously asked almost 10 analysis on the same word plus either one or more side number notes [] either complete [] or partial [ and",
-      "added_at": "2026-01-21T20:34:54.144230",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "`★ Insight ─────────────────────────────────────`\n**The Real Bug (from your logs)**:\n```\n[WebView] Scroll restoration: 962.0 (source: pending)  ← restored successfully\n[WebView] Scroll position saved:",
-      "added_at": "2026-01-21T20:41:53.113862",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "Are you sure these are necessary useful and helpful and foundamentally essential because I want to avoid unnecessary and really fix to the core!",
-      "added_at": "2026-01-21T20:41:53.113877",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "The fix is committed. Here's a summary of the **fundamental** approach:\n\n**Before (problematic)**:\n```\n1. saveScrollPosition() saves Y=500\n2. loadHTMLString() starts\n3. didFinish → restore Y=500 → cle",
-      "added_at": "2026-01-21T20:51:36.897989",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "A very important thing is that this change and this adaptation and modification will this incurr or affect any other behaviour or reader flow of reading comfortably and uiux smooth and nice backend fr",
-      "added_at": "2026-01-21T20:51:36.898036",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "Great, now I want you to carefully read over all of the new code you just wrote and other existing code you just modified with \"fresh eyes,\" looking super carefully for any obvious bugs, errors, probl",
-      "added_at": "2026-01-21T20:56:04.338999",
+      "content": "Look thoroughly on this because previous session you did thuis which seems to have some logical ideas in it and seems to be something to improve: ❯ the thing is that not necessarily saying minimal is ",
+      "added_at": "2026-01-22T00:23:19.011302",
       "source": "realtime_capture"
     }
   ],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-21T20:56:04.339006"
+  "updated_at": "2026-01-22T00:23:19.011304"
 }

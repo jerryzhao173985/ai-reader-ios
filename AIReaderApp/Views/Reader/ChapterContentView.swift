@@ -375,15 +375,24 @@ struct ChapterWebView: UIViewRepresentable {
         let styledHTML = generateStyledHTML()
         let styledContentHash = styledHTML.hashValue
 
+        // Detect structural changes (new/removed highlights) vs visual changes (color/count)
+        let currentHighlightIds = Set(highlights.map { $0.id })
+        let hasStructuralChange = currentHighlightIds != context.coordinator.lastHighlightIds
+
         let isChapterChange = baseContentHash != context.coordinator.lastBaseContentHash
-        let isHighlightUpdate = !isChapterChange && styledContentHash != context.coordinator.lastStyledContentHash
+        // Any styled change (structural or visual)
+        let hasStyledChange = !isChapterChange && styledContentHash != context.coordinator.lastStyledContentHash
+        // Structural change requires HTML reload to add/remove DOM elements
+        let needsHtmlReload = hasStructuralChange && hasStyledChange
+        // Visual-only change (color/count) can use JS injection without reload
+        let isVisualOnlyUpdate = hasStyledChange && !hasStructuralChange
 
         // CRITICAL: If user has active text selection, skip ALL reloads to preserve selection
         // Any changes (colorHex, analyses.count, etc.) will be applied when selection is cleared
         // We DON'T update lastStyledContentHash so the next update after selection clear will reload
         if hasActiveTextSelection && !isChapterChange {
             #if DEBUG
-            if isHighlightUpdate {
+            if hasStyledChange {
                 print("[WebView] Skipping reload - active text selection, deferring update")
             }
             #endif
@@ -408,20 +417,23 @@ struct ChapterWebView: UIViewRepresentable {
                 self.onMarkerUpdateHandled()
             }
 
-            // If no other changes (no new highlights), we can skip HTML reload
-            // The marker was updated via JS, and the hash will be updated below
-            if !isChapterChange && !isHighlightUpdate {
-                // Update hash to prevent future reload for this same state
+            // If only visual changes (color/count), skip HTML reload - JS update is sufficient
+            if isVisualOnlyUpdate {
+                // Update hashes to prevent future reload for this same state
                 context.coordinator.lastStyledContentHash = styledContentHash
+                #if DEBUG
+                print("[WebView] Visual-only update - using JS injection, skipping HTML reload")
+                #endif
                 return
             }
-            // Otherwise, continue to reload HTML for the new highlight
+            // Otherwise, continue to reload HTML for new/removed highlights
         }
 
         if isChapterChange {
             // Chapter changed - reset scroll to initialScrollOffset
             context.coordinator.lastBaseContentHash = baseContentHash
             context.coordinator.lastStyledContentHash = styledContentHash
+            context.coordinator.lastHighlightIds = currentHighlightIds
             context.coordinator.resetScrollRestoration()
             context.coordinator.lastHandledMarkerId = nil  // Reset for new chapter
 
@@ -430,13 +442,14 @@ struct ChapterWebView: UIViewRepresentable {
             #endif
 
             webView.loadHTMLString(styledHTML, baseURL: nil)
-        } else if isHighlightUpdate {
-            // Same chapter, highlights changed (new highlight created) - preserve scroll position
+        } else if needsHtmlReload {
+            // Same chapter, structural change (new/removed highlight) - preserve scroll position
             context.coordinator.lastStyledContentHash = styledContentHash
+            context.coordinator.lastHighlightIds = currentHighlightIds
             context.coordinator.saveScrollPositionForReload()
 
             #if DEBUG
-            print("[WebView] Highlight update - preserving scroll position")
+            print("[WebView] Structural highlight change - HTML reload with scroll preservation")
             #endif
 
             webView.loadHTMLString(styledHTML, baseURL: nil)
@@ -930,6 +943,8 @@ struct ChapterWebView: UIViewRepresentable {
         private var pendingScrollPosition: CGFloat?
         /// Last handled marker update ID to prevent duplicate handling
         var lastHandledMarkerId: UUID?
+        /// Track highlight IDs to detect structural changes (add/remove) vs visual changes (color/count)
+        var lastHighlightIds: Set<UUID> = []
 
         init(_ parent: ChapterWebView) {
             self.parent = parent
@@ -985,10 +1000,20 @@ struct ChapterWebView: UIViewRepresentable {
                     highlight.style.borderBottomColor = '\(colorHex)';
                 });
 
-                // Find or create marker container (only on the last highlight span)
+                // Find existing marker (could be highlight-marker-N from initial HTML or analysis-marker from previous JS)
                 const lastHighlight = highlights[highlights.length - 1];
-                let marker = lastHighlight.querySelector('.analysis-marker');
+                let marker = lastHighlight.querySelector('sup[class^="highlight-marker-"]') ||
+                             lastHighlight.querySelector('.analysis-marker');
+
+                // Extract the marker number from existing marker text (e.g., "[1]" or "[1·2]" → 1)
+                let markerNum = null;
+                if (marker && marker.textContent) {
+                    const match = marker.textContent.match(/\\[(\\d+)/);
+                    if (match) markerNum = match[1];
+                }
+
                 if (!marker) {
+                    // Create new marker only if none exists (shouldn't happen in normal flow)
                     marker = document.createElement('sup');
                     marker.className = 'analysis-marker';
                     marker.style.cssText = 'font-weight: bold; cursor: pointer; margin-left: 2px; font-size: 0.75em;';
@@ -1000,10 +1025,16 @@ struct ChapterWebView: UIViewRepresentable {
                     lastHighlight.appendChild(marker);
                 }
 
-                // Update marker text and color to match highlight
-                marker.textContent = '[\(analysisCount)]';
+                // Update marker text: preserve marker number, update analysis count
+                // Format: [N] if count <= 1, [N·count] if count > 1
+                if (markerNum) {
+                    marker.textContent = \(analysisCount) > 1 ? '[' + markerNum + '·\(analysisCount)]' : '[' + markerNum + ']';
+                } else {
+                    // Fallback: just show analysis count (marker was newly created)
+                    marker.textContent = '[\(analysisCount)]';
+                }
                 marker.style.color = '\(colorHex)';
-                console.log('[Marker] Updated marker for \(cleanId) to [\(analysisCount)] with color \(colorHex)');
+                console.log('[Marker] Updated marker for \(cleanId) to', marker.textContent, 'with color \(colorHex)');
                 return true;
             })();
             """
