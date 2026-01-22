@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 @Observable
 final class ReaderViewModel {
@@ -27,6 +28,32 @@ final class ReaderViewModel {
     var selectedHighlight: HighlightModel?
     /// Request to scroll reader to a specific highlight (used by AnalysisPanelView)
     var scrollToHighlightId: UUID?
+
+    // Undo Delete
+    /// Stores deleted highlight data for undo functionality
+    var deletedHighlightForUndo: DeletedHighlightData?
+    /// Timer to auto-clear undo state after timeout
+    private var undoTimer: Timer?
+
+    /// Data structure to store deleted highlight for undo
+    struct DeletedHighlightData {
+        let chapterIndex: Int
+        let selectedText: String
+        let contextBefore: String
+        let contextAfter: String
+        let startOffset: Int
+        let endOffset: Int
+        let colorHex: String
+        let analyses: [DeletedAnalysisData]
+
+        struct DeletedAnalysisData {
+            let type: AnalysisType
+            let prompt: String
+            let response: String
+            let createdAt: Date
+            let turns: [(question: String, answer: String, turnIndex: Int)]
+        }
+    }
 
     // AI Analysis
     let analysisJobManager = AnalysisJobManager()
@@ -138,6 +165,9 @@ final class ReaderViewModel {
             applyDeferredMarkerUpdates()
         }
 
+        // Clear scroll-to-highlight request (it's chapter-specific)
+        scrollToHighlightId = nil
+
         currentChapterIndex = index
         scrollOffset = 0
         _cachedChapters = nil  // Invalidate cache to refresh from SwiftData
@@ -242,6 +272,41 @@ final class ReaderViewModel {
     func deleteHighlight(_ highlight: HighlightModel) {
         let highlightId = highlight.id
 
+        // Haptic feedback for tactile confirmation
+        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+        impactFeedback.impactOccurred()
+
+        // Capture data for undo BEFORE deletion
+        let analysesData = highlight.analyses.map { analysis -> DeletedHighlightData.DeletedAnalysisData in
+            let turns = analysis.thread?.turns.sorted(by: { $0.turnIndex < $1.turnIndex }).map {
+                (question: $0.question, answer: $0.answer, turnIndex: $0.turnIndex)
+            } ?? []
+            return DeletedHighlightData.DeletedAnalysisData(
+                type: analysis.analysisType,
+                prompt: analysis.prompt,
+                response: analysis.response,
+                createdAt: analysis.createdAt,
+                turns: turns
+            )
+        }
+
+        deletedHighlightForUndo = DeletedHighlightData(
+            chapterIndex: highlight.chapterIndex,
+            selectedText: highlight.selectedText,
+            contextBefore: highlight.contextBefore,
+            contextAfter: highlight.contextAfter,
+            startOffset: highlight.startOffset,
+            endOffset: highlight.endOffset,
+            colorHex: highlight.colorHex,
+            analyses: analysesData
+        )
+
+        // Start undo timer (5 seconds to undo)
+        undoTimer?.invalidate()
+        undoTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+            self?.deletedHighlightForUndo = nil
+        }
+
         // Delete from database
         modelContext.delete(highlight)
         try? modelContext.save()
@@ -258,6 +323,71 @@ final class ReaderViewModel {
             isAnalyzing = false
             showingAnalysisPanel = false
         }
+    }
+
+    /// Undo the last deleted highlight
+    func undoDeleteHighlight() {
+        guard let data = deletedHighlightForUndo else { return }
+
+        // Cancel undo timer
+        undoTimer?.invalidate()
+        undoTimer = nil
+
+        // Recreate the highlight
+        let highlight = HighlightModel(
+            chapterIndex: data.chapterIndex,
+            selectedText: data.selectedText,
+            contextBefore: data.contextBefore,
+            contextAfter: data.contextAfter,
+            startOffset: data.startOffset,
+            endOffset: data.endOffset
+        )
+        highlight.colorHex = data.colorHex
+        highlight.book = book
+        modelContext.insert(highlight)
+
+        // Recreate analyses
+        for analysisData in data.analyses {
+            let analysis = AIAnalysisModel(
+                analysisType: analysisData.type,
+                prompt: analysisData.prompt,
+                response: analysisData.response
+            )
+            // Preserve original creation date
+            analysis.createdAt = analysisData.createdAt
+            analysis.highlight = highlight
+            highlight.analyses.append(analysis)
+            modelContext.insert(analysis)
+
+            // Recreate conversation thread if exists
+            if !analysisData.turns.isEmpty {
+                let thread = AnalysisThreadModel()
+                thread.analysis = analysis
+                analysis.thread = thread
+                modelContext.insert(thread)
+
+                for turnData in analysisData.turns {
+                    let turn = AnalysisTurnModel(
+                        question: turnData.question,
+                        answer: turnData.answer,
+                        turnIndex: turnData.turnIndex
+                    )
+                    turn.thread = thread
+                    thread.turns.append(turn)
+                    modelContext.insert(turn)
+                }
+            }
+        }
+
+        try? modelContext.save()
+        loadHighlightsForCurrentChapter()
+
+        // Clear undo state
+        deletedHighlightForUndo = nil
+
+        // Haptic feedback for undo confirmation
+        let notificationFeedback = UINotificationFeedbackGenerator()
+        notificationFeedback.notificationOccurred(.success)
     }
 
     // MARK: - AI Analysis

@@ -90,13 +90,18 @@ struct ReaderView: View {
     private func readerContent(viewModel: ReaderViewModel) -> some View {
         // Use simple ZStack layout for iPhone - NavigationSplitView has issues on compact devices
         // NavigationSplitView's 3-column mode doesn't work well on iPhone
-        ZStack {
+        ZStack(alignment: .bottom) {
             // Main content - always visible
             ChapterContentView(viewModel: viewModel)
                 .environment(settings)
 
-            // TOC sidebar as sheet on iPhone
-            // Analysis panel as sheet on iPhone
+            // Undo Toast - appears at screen level after highlight deletion
+            // Visible even when analysis panel sheet is closed
+            if viewModel.deletedHighlightForUndo != nil {
+                undoToast(viewModel: viewModel)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: viewModel.deletedHighlightForUndo != nil)
+            }
         }
         .sheet(isPresented: Binding(
             get: { viewModel.showingTOC },
@@ -136,6 +141,42 @@ struct ReaderView: View {
             }
             .presentationDetents([.medium, .large])
         }
+    }
+
+    // MARK: - Undo Toast
+    /// Screen-level undo toast that appears after highlight deletion
+    /// Visible regardless of panel state - follows standard iOS/Material Design pattern
+    private func undoToast(viewModel: ReaderViewModel) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trash")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.7))
+
+            Text("Highlight deleted")
+                .font(.subheadline)
+                .foregroundStyle(.white)
+
+            Spacer()
+
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    viewModel.undoDeleteHighlight()
+                }
+            } label: {
+                Text("Undo")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.yellow)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.black.opacity(0.85))
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
     }
 }
 
