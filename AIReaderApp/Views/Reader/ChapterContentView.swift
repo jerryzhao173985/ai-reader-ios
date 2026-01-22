@@ -872,15 +872,34 @@ struct ChapterWebView: UIViewRepresentable {
                 function attachHighlightClickHandlers() {
                     document.querySelectorAll('[class^="highlight-"]').forEach(el => {
                         el.addEventListener('click', function(e) {
-                            const classes = this.className.split(' ');
-                            const highlightClass = classes.find(c => c.startsWith('highlight-') && !c.includes('marker'));
-                            if (highlightClass) {
-                                const highlightId = highlightClass.replace('highlight-', '');
-                                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.highlightTapped) {
-                                    window.webkit.messageHandlers.highlightTapped.postMessage({
-                                        id: highlightId
-                                    });
+                            let highlightId = null;
+
+                            // Check if this is a marker (class contains 'marker')
+                            if (this.className.includes('marker')) {
+                                // It's a marker - find parent highlight span
+                                let parent = this.parentElement;
+                                while (parent && parent !== document.body) {
+                                    const parentClasses = parent.className ? parent.className.split(' ') : [];
+                                    const highlightClass = parentClasses.find(c => c.startsWith('highlight-') && !c.includes('marker'));
+                                    if (highlightClass) {
+                                        highlightId = highlightClass.replace('highlight-', '');
+                                        break;
+                                    }
+                                    parent = parent.parentElement;
                                 }
+                            } else {
+                                // It's a highlight span - extract ID directly
+                                const classes = this.className.split(' ');
+                                const highlightClass = classes.find(c => c.startsWith('highlight-') && !c.includes('marker'));
+                                if (highlightClass) {
+                                    highlightId = highlightClass.replace('highlight-', '');
+                                }
+                            }
+
+                            if (highlightId && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.highlightTapped) {
+                                window.webkit.messageHandlers.highlightTapped.postMessage({
+                                    id: highlightId
+                                });
                             }
                             e.stopPropagation();
                         });
