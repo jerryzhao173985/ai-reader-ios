@@ -985,20 +985,10 @@ struct ChapterWebView: UIViewRepresentable {
                     highlight.style.borderBottomColor = '\(colorHex)';
                 });
 
-                // Find existing marker (could be highlight-marker-N from initial load, or analysis-marker from previous update)
+                // Find or create marker container (only on the last highlight span)
                 const lastHighlight = highlights[highlights.length - 1];
-                let marker = lastHighlight.querySelector('sup[class^="highlight-marker-"]') ||
-                             lastHighlight.querySelector('.analysis-marker');
-
-                // Extract the marker number from existing marker text (e.g., "[1]" or "[1·2]" → 1)
-                let markerNum = null;
-                if (marker && marker.textContent) {
-                    const match = marker.textContent.match(/\\[(\\d+)/);
-                    if (match) markerNum = match[1];
-                }
-
+                let marker = lastHighlight.querySelector('.analysis-marker');
                 if (!marker) {
-                    // Create new marker only if none exists
                     marker = document.createElement('sup');
                     marker.className = 'analysis-marker';
                     marker.style.cssText = 'font-weight: bold; cursor: pointer; margin-left: 2px; font-size: 0.75em;';
@@ -1010,16 +1000,10 @@ struct ChapterWebView: UIViewRepresentable {
                     lastHighlight.appendChild(marker);
                 }
 
-                // Update marker text: preserve marker number, update analysis count
-                // Format: [N] if count <= 1, [N·count] if count > 1
-                if (markerNum) {
-                    marker.textContent = \(analysisCount) > 1 ? '[' + markerNum + '·\(analysisCount)]' : '[' + markerNum + ']';
-                } else {
-                    // Fallback: just show analysis count (shouldn't happen normally)
-                    marker.textContent = '[\(analysisCount)]';
-                }
+                // Update marker text and color to match highlight
+                marker.textContent = '[\(analysisCount)]';
                 marker.style.color = '\(colorHex)';
-                console.log('[Marker] Updated marker for \(cleanId) to', marker.textContent, 'with color \(colorHex)');
+                console.log('[Marker] Updated marker for \(cleanId) to [\(analysisCount)] with color \(colorHex)');
                 return true;
             })();
             """
