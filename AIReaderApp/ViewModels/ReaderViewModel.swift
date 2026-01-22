@@ -44,6 +44,7 @@ final class ReaderViewModel {
         let startOffset: Int
         let endOffset: Int
         let colorHex: String
+        let markerIndex: Int  // 1-based marker number for undo restoration
         let analyses: [DeletedAnalysisData]
 
         struct DeletedAnalysisData {
@@ -54,6 +55,9 @@ final class ReaderViewModel {
             let turns: [(question: String, answer: String, turnIndex: Int)]
         }
     }
+
+    /// Pending undo restore data for JS injection (avoids HTML reload flicker)
+    var pendingUndoRestore: (highlightId: UUID, startOffset: Int, endOffset: Int, markerIndex: Int, analysisCount: Int, colorHex: String)?
 
     // AI Analysis
     let analysisJobManager = AnalysisJobManager()
@@ -282,6 +286,10 @@ final class ReaderViewModel {
         let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
         impactFeedback.impactOccurred()
 
+        // Calculate marker index (1-based position in sorted highlight list) BEFORE deletion
+        let sortedHighlights = currentChapterHighlights.sorted { $0.startOffset < $1.startOffset }
+        let markerIndex = (sortedHighlights.firstIndex(where: { $0.id == highlight.id }) ?? 0) + 1
+
         // Capture data for undo BEFORE deletion
         let analysesData = highlight.analyses.map { analysis -> DeletedHighlightData.DeletedAnalysisData in
             let turns = analysis.thread?.turns.sorted(by: { $0.turnIndex < $1.turnIndex }).map {
@@ -304,6 +312,7 @@ final class ReaderViewModel {
             startOffset: highlight.startOffset,
             endOffset: highlight.endOffset,
             colorHex: highlight.colorHex,
+            markerIndex: markerIndex,
             analyses: analysesData
         )
 
@@ -338,6 +347,10 @@ final class ReaderViewModel {
         // Cancel undo timer
         undoTimer?.invalidate()
         undoTimer = nil
+
+        // Ensure no scroll-to-highlight behavior during undo
+        // User is reading at their current position, not at the highlight location
+        scrollToHighlightId = nil
 
         // Recreate the highlight
         let highlight = HighlightModel(
@@ -386,6 +399,18 @@ final class ReaderViewModel {
         }
 
         try? modelContext.save()
+
+        // Set pending undo restore for JS injection (avoids HTML reload flicker)
+        // ChapterWebView will inject the highlight via JS instead of reloading entire page
+        pendingUndoRestore = (
+            highlightId: highlight.id,
+            startOffset: data.startOffset,
+            endOffset: data.endOffset,
+            markerIndex: data.markerIndex,
+            analysisCount: data.analyses.count,
+            colorHex: data.colorHex
+        )
+
         loadHighlightsForCurrentChapter()
 
         // Clear undo state

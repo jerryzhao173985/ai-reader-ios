@@ -74,8 +74,12 @@ struct ChapterContentView: View {
                                 onMarkerUpdateHandled: {
                                     viewModel.pendingMarkerUpdate = nil
                                 },
+                                onUndoRestoreHandled: {
+                                    viewModel.pendingUndoRestore = nil
+                                },
                                 scrollToHighlightId: viewModel.scrollToHighlightId?.uuidString,
                                 pendingMarkerUpdate: viewModel.pendingMarkerUpdate,
+                                pendingUndoRestore: viewModel.pendingUndoRestore,
                                 hasActiveTextSelection: viewModel.hasActiveTextSelection
                             )
                             .frame(minHeight: UIScreen.main.bounds.height - 200)
@@ -317,6 +321,8 @@ struct ChapterWebView: UIViewRepresentable {
     let onScrollChanged: (CGFloat) -> Void
     /// Callback to clear pending marker update after it's been handled
     let onMarkerUpdateHandled: () -> Void
+    /// Callback to clear pending undo restore after it's been handled
+    let onUndoRestoreHandled: () -> Void
 
     /// Highlight ID to scroll to (when marker is tapped externally)
     var scrollToHighlightId: String?
@@ -324,6 +330,10 @@ struct ChapterWebView: UIViewRepresentable {
     /// Pending marker update - inject via JS instead of HTML reload to avoid flicker
     /// Includes colorHex to update highlight background color when analysis completes
     var pendingMarkerUpdate: (highlightId: UUID, analysisCount: Int, colorHex: String)?
+
+    /// Pending undo restore - inject highlight via JS instead of HTML reload to avoid flicker
+    /// Used when undoing a deleted highlight
+    var pendingUndoRestore: (highlightId: UUID, startOffset: Int, endOffset: Int, markerIndex: Int, analysisCount: Int, colorHex: String)?
 
     /// When true, skip HTML reloads to preserve user's text selection
     /// Any pending updates will be applied when this becomes false
@@ -434,11 +444,42 @@ struct ChapterWebView: UIViewRepresentable {
             context.coordinator.resetScrollRestoration()
             context.coordinator.lastHandledMarkerId = nil  // Reset for new chapter
 
+            // Clear any pending undo restore - the new chapter HTML already includes the highlight
+            if pendingUndoRestore != nil {
+                DispatchQueue.main.async {
+                    self.onUndoRestoreHandled()
+                }
+            }
+
             #if DEBUG
             print("[WebView] Chapter change - loading new content, length: \(styledHTML.count)")
             #endif
 
             webView.loadHTMLString(styledHTML, baseURL: nil)
+        } else if let undo = pendingUndoRestore, hasStructuralChange {
+            // Undo restore - use JS injection to add highlight without HTML reload
+            // This avoids the flicker caused by loadHTMLString
+            context.coordinator.lastStyledContentHash = styledContentHash
+            context.coordinator.lastHighlightIds = currentHighlightIds
+
+            context.coordinator.injectHighlightRestore(
+                webView: webView,
+                highlightId: undo.highlightId,
+                startOffset: undo.startOffset,
+                endOffset: undo.endOffset,
+                markerIndex: undo.markerIndex,
+                analysisCount: undo.analysisCount,
+                colorHex: undo.colorHex
+            )
+
+            // Notify that we handled the undo restore
+            DispatchQueue.main.async {
+                self.onUndoRestoreHandled()
+            }
+
+            #if DEBUG
+            print("[WebView] Undo restore via JS injection - no HTML reload")
+            #endif
         } else if needsHtmlReload {
             // Same chapter, structural change (new/removed highlight) - preserve scroll position
             context.coordinator.lastStyledContentHash = styledContentHash
@@ -454,6 +495,13 @@ struct ChapterWebView: UIViewRepresentable {
 
         // Scroll to highlight if requested
         if let highlightId = scrollToHighlightId {
+            // IMPORTANT: Clear pendingScrollPosition when navigating to a highlight
+            // This ensures that if the user deletes the highlight after navigating to it,
+            // the scroll preservation will capture the CURRENT position (at the highlight)
+            // rather than the OLD position (from before they navigated)
+            // User's intent: "I navigated here to read, so keep me here after delete"
+            context.coordinator.clearPendingScrollForNavigation()
+
             let cleanId = highlightId.replacingOccurrences(of: "-", with: "")
             let js = """
             (function() {
@@ -949,6 +997,13 @@ struct ChapterWebView: UIViewRepresentable {
             pendingScrollPosition = nil
         }
 
+        /// Clear pending scroll position when user navigates to a highlight
+        /// This ensures subsequent delete operations save the current (navigated-to) position
+        /// rather than the stale position from before navigation
+        func clearPendingScrollForNavigation() {
+            pendingScrollPosition = nil
+        }
+
         /// Save current scroll position before reloading HTML
         /// Uses pendingScrollPosition which is NOT cleared after restoration - keeps valid position
         /// for subsequent rapid loads. Only cleared when user manually scrolls.
@@ -1039,6 +1094,82 @@ struct ChapterWebView: UIViewRepresentable {
                     print("[WebView] Marker injection error: \(error.localizedDescription)")
                 } else {
                     print("[WebView] Marker injected successfully for highlight \(cleanId) with color \(colorHex)")
+                }
+                #endif
+            }
+        }
+
+        /// Inject a restored highlight via JavaScript (for undo without HTML reload)
+        /// This avoids the flicker caused by loadHTMLString during undo
+        func injectHighlightRestore(
+            webView: WKWebView,
+            highlightId: UUID,
+            startOffset: Int,
+            endOffset: Int,
+            markerIndex: Int,
+            analysisCount: Int,
+            colorHex: String
+        ) {
+            let cleanId = highlightId.uuidString.replacingOccurrences(of: "-", with: "")
+            let js = """
+            (function() {
+                // First, renumber all existing markers that are >= markerIndex
+                // They need to shift up by 1 to make room for the restored highlight
+                document.querySelectorAll('sup[class^="highlight-marker-"]').forEach(function(marker) {
+                    const match = marker.textContent.match(/\\[(\\d+)\\]/);
+                    if (match) {
+                        const num = parseInt(match[1]);
+                        if (num >= \(markerIndex)) {
+                            marker.textContent = '[' + (num + 1) + ']';
+                        }
+                    }
+                });
+
+                // Also check analysis-marker class markers
+                document.querySelectorAll('.analysis-marker').forEach(function(marker) {
+                    const match = marker.textContent.match(/\\[(\\d+)\\]/);
+                    if (match) {
+                        const num = parseInt(match[1]);
+                        if (num >= \(markerIndex)) {
+                            marker.textContent = '[' + (num + 1) + ']';
+                        }
+                    }
+                });
+
+                // Now apply the restored highlight using the existing applyHighlight function
+                try {
+                    applyHighlight('\(cleanId)', \(startOffset), \(endOffset), \(markerIndex), \(analysisCount));
+                    console.log('[Undo] Highlight restored: \(cleanId)');
+                } catch (e) {
+                    console.log('[Undo] Error applying highlight:', e.message);
+                    return false;
+                }
+
+                // Attach click handlers to the new highlight
+                const highlights = document.querySelectorAll('.highlight-\(cleanId)');
+                highlights.forEach(function(el) {
+                    el.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        window.webkit.messageHandlers.highlightTapped.postMessage({id: '\(cleanId)'});
+                    });
+                });
+
+                // Update the color for the restored highlight
+                highlights.forEach(function(el) {
+                    el.style.backgroundColor = '\(colorHex)40';
+                    el.style.borderBottomColor = '\(colorHex)';
+                });
+
+                return true;
+            })();
+            """
+
+            webView.evaluateJavaScript(js) { result, error in
+                #if DEBUG
+                if let error = error {
+                    print("[WebView] Highlight restore error: \(error.localizedDescription)")
+                } else {
+                    print("[WebView] Highlight restored successfully: \(cleanId)")
                 }
                 #endif
             }
