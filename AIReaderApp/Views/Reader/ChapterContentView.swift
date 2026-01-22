@@ -860,12 +860,9 @@ struct ChapterWebView: UIViewRepresentable {
                         if (i === textNodes.length - 1 && markerNum) {
                             const marker = document.createElement('sup');
                             marker.className = 'highlight-marker-' + markerNum;
-                            // Show analysis count if > 1 (e.g., [1·3] for marker 1 with 3 analyses)
-                            if (analysisCount > 1) {
-                                marker.textContent = '[' + markerNum + '·' + analysisCount + ']';
-                            } else {
-                                marker.textContent = '[' + markerNum + ']';
-                            }
+                            // Simple format: [N] where N is the highlight order
+                            // Clicking shows panel with ALL analyses for this highlight
+                            marker.textContent = '[' + markerNum + ']';
                             span.appendChild(marker);
                         }
 
@@ -1025,12 +1022,12 @@ struct ChapterWebView: UIViewRepresentable {
                     lastHighlight.appendChild(marker);
                 }
 
-                // Update marker text: preserve marker number, update analysis count
-                // Format: [N] if count <= 1, [N·count] if count > 1
+                // Update marker text: simple [N] format
+                // The panel shows all analyses when clicked - no need to encode count in marker
                 if (markerNum) {
-                    marker.textContent = \(analysisCount) > 1 ? '[' + markerNum + '·\(analysisCount)]' : '[' + markerNum + ']';
+                    marker.textContent = '[' + markerNum + ']';
                 } else {
-                    // Fallback: just show analysis count (marker was newly created)
+                    // Fallback: use analysis count as marker number (shouldn't happen normally)
                     marker.textContent = '[\(analysisCount)]';
                 }
                 marker.style.color = '\(colorHex)';
