@@ -165,8 +165,14 @@ final class ReaderViewModel {
             applyDeferredMarkerUpdates()
         }
 
-        // Clear scroll-to-highlight request (it's chapter-specific)
+        // Clear highlight selection state (belongs to old chapter, now out of context)
+        // Matches X button pattern: both are "deselection" operations
+        // Panel stays open but will show new chapter's highlights list
         scrollToHighlightId = nil
+        selectedHighlight = nil
+        selectedText = ""
+        analysisResult = nil
+        currentAnalysisType = nil
 
         currentChapterIndex = index
         scrollOffset = 0
