@@ -21,9 +21,6 @@ struct ChapterContentView: View {
     @State private var pendingSelectedText = ""
     @State private var pendingContext = ""
 
-    // Scroll to highlight tracking
-    @State private var scrollToHighlightId: String?
-
     var body: some View {
         ZStack {
             settings.theme.backgroundColor
@@ -63,12 +60,12 @@ struct ChapterContentView: View {
                                 },
                                 onHighlightTapped: { highlight in
                                     // Scroll to the highlight and open panel
-                                    scrollToHighlightId = highlight.id.uuidString
+                                    viewModel.scrollToHighlightId = highlight.id
                                     viewModel.selectHighlight(highlight)
 
                                     // Clear scroll ID after a short delay to allow re-scrolling
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                        scrollToHighlightId = nil
+                                        viewModel.scrollToHighlightId = nil
                                     }
                                 },
                                 onScrollChanged: { offset in
@@ -77,7 +74,7 @@ struct ChapterContentView: View {
                                 onMarkerUpdateHandled: {
                                     viewModel.pendingMarkerUpdate = nil
                                 },
-                                scrollToHighlightId: scrollToHighlightId,
+                                scrollToHighlightId: viewModel.scrollToHighlightId?.uuidString,
                                 pendingMarkerUpdate: viewModel.pendingMarkerUpdate,
                                 hasActiveTextSelection: viewModel.hasActiveTextSelection
                             )

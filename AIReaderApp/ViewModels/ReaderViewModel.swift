@@ -25,6 +25,8 @@ final class ReaderViewModel {
     // Highlights
     var currentChapterHighlights: [HighlightModel] = []
     var selectedHighlight: HighlightModel?
+    /// Request to scroll reader to a specific highlight (used by AnalysisPanelView)
+    var scrollToHighlightId: UUID?
 
     // AI Analysis
     let analysisJobManager = AnalysisJobManager()
@@ -245,10 +247,14 @@ final class ReaderViewModel {
         try? modelContext.save()
         loadHighlightsForCurrentChapter()
 
-        // Clear all selection-related state if this highlight was selected
+        // Clear ALL selection-related state if this highlight was selected
+        // Must clear selectedText too - it was set by selectHighlight() and without clearing,
+        // reopening panel shows pendingSelectionSection instead of chapter highlights
         if selectedHighlight?.id == highlightId {
             selectedHighlight = nil
+            selectedText = ""
             analysisResult = nil
+            currentAnalysisType = nil
             isAnalyzing = false
             showingAnalysisPanel = false
         }

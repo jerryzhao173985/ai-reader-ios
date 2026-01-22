@@ -65,8 +65,13 @@ struct AnalysisPanelView: View {
 
             if viewModel.selectedHighlight != nil {
                 Button {
+                    // Clear ALL selection-related state to return to chapter highlights view
+                    // selectedText must be cleared because selectHighlight() sets it,
+                    // and non-empty selectedText shows pendingSelectionSection instead of emptyStateSection
                     viewModel.selectedHighlight = nil
+                    viewModel.selectedText = ""
                     viewModel.analysisResult = nil
+                    viewModel.currentAnalysisType = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -276,47 +281,62 @@ struct AnalysisPanelView: View {
     }
 
     private func previousAnalysisCard(_ analysis: AIAnalysisModel) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label(analysis.analysisType.displayName, systemImage: analysis.analysisType.iconName)
+        Button {
+            // Show this analysis's full response in the current result area
+            viewModel.currentAnalysisType = analysis.analysisType
+            viewModel.analysisResult = analysis.response
+            viewModel.isAnalyzing = false
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label(analysis.analysisType.displayName, systemImage: analysis.analysisType.iconName)
+                        .font(.caption)
+                        .foregroundStyle(Color(hex: analysis.analysisType.colorHex) ?? .secondary)
+
+                    Spacer()
+
+                    Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    // Indicate tappable
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                markdownText(analysis.response)
                     .font(.caption)
-                    .foregroundStyle(Color(hex: analysis.analysisType.colorHex) ?? .secondary)
+                    .foregroundStyle(settings.theme.textColor)
+                    .lineLimit(4)
+                    .multilineTextAlignment(.leading)
 
-                Spacer()
+                // Conversation Thread
+                if let thread = analysis.thread, !thread.turns.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Q: \(turn.question)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
 
-                Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            markdownText(analysis.response)
-                .font(.caption)
-                .foregroundStyle(settings.theme.textColor)
-                .lineLimit(4)
-
-            // Conversation Thread
-            if let thread = analysis.thread, !thread.turns.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Q: \(turn.question)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-
-                            (Text("A: ") + markdownText(turn.answer))
-                                .font(.caption2)
-                                .foregroundStyle(settings.theme.textColor)
+                                (Text("A: ") + markdownText(turn.answer))
+                                    .font(.caption2)
+                                    .foregroundStyle(settings.theme.textColor)
+                            }
+                            .padding(.leading, 8)
                         }
-                        .padding(.leading, 8)
                     }
                 }
             }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(settings.theme.textColor.opacity(0.1), lineWidth: 1)
+            )
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(settings.theme.textColor.opacity(0.1), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
     }
 
     // MARK: - Pending Selection Section
@@ -395,7 +415,14 @@ struct AnalysisPanelView: View {
 
     private func chapterHighlightRow(_ highlight: HighlightModel) -> some View {
         Button {
-            viewModel.selectedHighlight = highlight
+            // Trigger scroll to this highlight in the reader view
+            viewModel.scrollToHighlightId = highlight.id
+            // Select the highlight (loads its analysis and opens panel)
+            viewModel.selectHighlight(highlight)
+            // Clear scroll ID after a short delay to allow re-scrolling if tapped again
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                viewModel.scrollToHighlightId = nil
+            }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 Text(highlight.selectedText)
