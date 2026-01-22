@@ -2,62 +2,50 @@
   "memories": [
     {
       "type": "preference",
-      "content": "Build/test on physical iPhone 15 Pro Max via WiFi (Device ID: 00008130-001659882E43001C). User prefers complete, defensively correct code over minimal code if it aids maintainer understanding.",
-      "added_at": "2026-01-20T07:20:00.000000"
+      "content": "Build/test on physical iPhone 15 Pro Max via WiFi (Device ID: 00008130-001659882E43001C). User prefers fundamentally correct, complete code that addresses root causes - not minimal changes or overkill complexity. Defensive correctness valued over brevity when it aids maintainer understanding.",
+      "added_at": "2026-01-22T10:00:00.000000"
     },
     {
       "type": "completed_feature",
-      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library, TOC navigation, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions), inline side note markers [1][2][3], delete highlight via ellipsis menu + quick action button. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
-      "added_at": "2026-01-21T21:00:00.000000"
+      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library, TOC, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions), inline markers [1][2][3], delete highlight + undo (flicker-free via JS injection), haptic feedback, clickable previous analysis cards, brain icon chapter highlights list, cross-chapter analysis persistence. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
+      "added_at": "2026-01-22T13:30:00.000000"
     },
     {
       "type": "technical",
-      "content": "SwiftData requires explicit modelContext.insert() for ALL related objects. EPUB spine includes front matter - findFirstContentChapter() skips items with <500 chars plainText.",
-      "added_at": "2026-01-20T08:01:00.000000"
+      "content": "SwiftData architecture: book.highlights = ALL highlights (book-scoped, SwiftData relationship), currentChapterHighlights = filtered subset for current chapter (refreshed by loadHighlightsForCurrentChapter). Use book.highlights for cross-chapter lookups (analysis save checks). Use currentChapterHighlights for rendering HTML and deferred queue processing. Both are same SwiftData objects (references).",
+      "added_at": "2026-01-22T14:20:00.000000"
     },
     {
       "type": "technical",
-      "content": "WKWebView architecture: JS injection for marker/color updates (not loadHTMLString to avoid flicker). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection flag + pendingMarkerUpdatesQueue. Scroll preservation: pendingScrollPosition NOT cleared after restoration, only on user manual scroll (scrollViewWillBeginDragging). Marker offset drift fix: isMarkerTextNode() + getTextOffset boundary snapping.",
-      "added_at": "2026-01-22T00:20:00.000000"
+      "content": "WKWebView scroll/flicker prevention: JS injection for marker/color/undo updates (not loadHTMLString). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection + pendingMarkerUpdatesQueue. goToChapter() MUST clear hasActiveTextSelection first to ensure cross-chapter analysis uses immediate update path (not deferred queue). pendingUndoRestore cleared on chapter change.",
+      "added_at": "2026-01-22T14:20:00.000000"
     },
     {
       "type": "decision",
-      "content": "AI analysis runs in background. Panel only opens when tapping inline side note marker [1][2][3], not automatically after analysis completes. Marker click handler: traverse up to parent highlight-{uuid} span (markers have highlight-marker-N class). injectMarkerUpdate() creates .analysis-marker but HTML reload overwrites it - effectively dead code.",
-      "added_at": "2026-01-22T00:20:00.000000"
+      "content": "AI analysis runs in background. Panel only opens when tapping inline marker [1][2][3] or brain icon. Cross-chapter analysis persistence: use book.highlights.contains() for save checks. Deferred queue (pendingMarkerUpdatesQueue) is chapter-scoped - only contains updates for current chapter because hasActiveTextSelection=false on other chapters.",
+      "added_at": "2026-01-22T14:20:00.000000"
     },
     {
       "type": "decision",
-      "content": "Delete highlight: reset ALL 4 selection-related states (selectedHighlight, analysisResult, isAnalyzing, showingAnalysisPanel) for complete state cleanup and symmetry with selectHighlight(). These form a logical unit - clearing partially creates implicit dependencies.",
-      "added_at": "2026-01-22T00:20:00.000000"
+      "content": "State Symmetry Principle: selectHighlight() sets 6 states. Cleanup paths: X button clears 4 (keeps panel open), deleteHighlight clears 6, goToChapter() clears 6 including hasActiveTextSelection (highlight selection is chapter-scoped). scrollToHighlightId cleared on chapter change. goToChapter() clears UI state but does NOT cancel background analysis Tasks.",
+      "added_at": "2026-01-22T14:20:00.000000"
     }
   ],
   "manual_memories": [],
   "realtime_memories": [
     {
       "type": "claude_response",
-      "content": "Memory consolidated: 11 → 6 entries. Removed conversation fragments, merged WKWebView patterns, added today's insights about dead code and state management philosophy.",
-      "added_at": "2026-01-22T00:23:19.011128",
+      "content": "Memory consolidated (10 realtime → 0, 6 core memories with architecture clarification).",
+      "added_at": "2026-01-22T14:23:23.576934",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "Look thoroughly on this because previous session you did thuis which seems to have some logical ideas in it and seems to be something to improve: ❯ the thing is that not necessarily saying minimal is ",
-      "added_at": "2026-01-22T00:23:19.011302",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "Done. Here's the complete summary:\n\n`★ Insight ─────────────────────────────────────`\n**The Proper Fix - Structural vs Visual Change Separation**\n\n**Before (Inefficient):**\n```\nanalysis completes\n  → ",
-      "added_at": "2026-01-22T00:37:06.623958",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "This is something I do not understand at all [N·count] if count > 1 for example I see art one place the side note shows [1·2] I was soconfused with middle dot, I was wondering if there are two exact s",
-      "added_at": "2026-01-22T00:37:06.623978",
+      "content": "OKAY good and very good now commit the changes Note there is the first changes of bug fixes that I already staged So if you see the git status those staged files I want to first git commit for these a",
+      "added_at": "2026-01-22T14:23:23.576958",
       "source": "realtime_capture"
     }
   ],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-22T00:37:06.623979"
+  "updated_at": "2026-01-22T14:23:23.576960"
 }

@@ -163,6 +163,11 @@ final class ReaderViewModel {
     func goToChapter(_ index: Int) {
         guard index >= 0 && index < chapterCount else { return }
 
+        // Clear active selection flag FIRST - chapter change ends any selection
+        // This ensures applyDeferredMarkerUpdates() and analysis completions
+        // use the immediate update path (not deferred queue)
+        hasActiveTextSelection = false
+
         // Apply any deferred updates for current chapter before leaving
         // This ensures colorHex is saved even if user had active selection
         if !pendingMarkerUpdatesQueue.isEmpty {
@@ -467,7 +472,9 @@ final class ReaderViewModel {
                                 isAnalyzing = false
                             }
                             // Only save if highlight wasn't deleted while analysis was running
-                            if currentChapterHighlights.contains(where: { $0.id == highlightId }) {
+                            // Use book.highlights (not currentChapterHighlights) so analysis saves
+                            // even when user switches chapters during background processing
+                            if book.highlights.contains(where: { $0.id == highlightId }) {
                                 saveAnalysis(
                                     to: highlight,
                                     type: type,
@@ -541,6 +548,8 @@ final class ReaderViewModel {
 
         // First, update colorHex in SwiftData for all deferred highlights
         // This was deferred to avoid changing the hash while user had active selection
+        // Note: Queue only contains current chapter's highlights (hasActiveTextSelection
+        // is cleared on chapter change, so cross-chapter updates go immediate path)
         for update in lastUpdates.values {
             if let highlight = currentChapterHighlights.first(where: { $0.id == update.highlightId }) {
                 highlight.colorHex = update.colorHex
@@ -614,7 +623,9 @@ final class ReaderViewModel {
                             }
 
                             // Only save if highlight wasn't deleted while analysis was running
-                            if currentChapterHighlights.contains(where: { $0.id == highlightId }) {
+                            // Use book.highlights (not currentChapterHighlights) so analysis saves
+                            // even when user switches chapters during background processing
+                            if book.highlights.contains(where: { $0.id == highlightId }) {
                                 if let analysis = existingAnalysis {
                                     // Add to existing thread
                                     addTurnToThread(analysis: analysis, question: question, answer: result)
