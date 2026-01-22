@@ -548,14 +548,34 @@ final class ReaderViewModel {
 
         // First, update colorHex in SwiftData for all deferred highlights
         // This was deferred to avoid changing the hash while user had active selection
-        // Note: Queue only contains current chapter's highlights (hasActiveTextSelection
-        // is cleared on chapter change, so cross-chapter updates go immediate path)
+        // Use book.highlights to ensure we always find the highlight, even if
+        // currentChapterHighlights is stale or being modified during chapter transition
+        #if DEBUG
+        print("[ApplyDeferred] Processing \(lastUpdates.count) deferred updates")
+        #endif
         for update in lastUpdates.values {
-            if let highlight = currentChapterHighlights.first(where: { $0.id == update.highlightId }) {
+            if let highlight = book.highlights.first(where: { $0.id == update.highlightId }) {
+                let oldColor = highlight.colorHex
                 highlight.colorHex = update.colorHex
+                #if DEBUG
+                print("[ApplyDeferred] Updated highlight \(update.highlightId.uuidString.prefix(8)): \(oldColor) → \(update.colorHex)")
+                #endif
+            } else {
+                #if DEBUG
+                print("[ApplyDeferred] WARNING: Highlight \(update.highlightId.uuidString.prefix(8)) NOT FOUND in book.highlights!")
+                #endif
             }
         }
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+            #if DEBUG
+            print("[ApplyDeferred] SwiftData save succeeded")
+            #endif
+        } catch {
+            #if DEBUG
+            print("[ApplyDeferred] ERROR saving: \(error)")
+            #endif
+        }
 
         // Now trigger the marker updates via JS injection
         // NOTE: Setting pendingMarkerUpdate multiple times in a loop only keeps the last one
