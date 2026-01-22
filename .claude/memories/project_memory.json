@@ -12,40 +12,27 @@
     },
     {
       "type": "technical",
-      "content": "SwiftData architecture: book.highlights = ALL highlights (book-scoped, SwiftData relationship), currentChapterHighlights = filtered subset for current chapter (refreshed by loadHighlightsForCurrentChapter). Use book.highlights for cross-chapter lookups (analysis save checks). Use currentChapterHighlights for rendering HTML and deferred queue processing. Both are same SwiftData objects (references).",
+      "content": "SwiftData architecture: book.highlights = ALL highlights (book-scoped, SwiftData relationship), currentChapterHighlights = filtered subset for current chapter (refreshed by loadHighlightsForCurrentChapter). Use book.highlights for cross-chapter lookups (analysis save checks, deferred marker updates). Use currentChapterHighlights for rendering HTML. Both are same SwiftData objects (references).",
       "added_at": "2026-01-22T14:20:00.000000"
     },
     {
       "type": "technical",
-      "content": "WKWebView scroll/flicker prevention: JS injection for marker/color/undo updates (not loadHTMLString). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection + pendingMarkerUpdatesQueue. goToChapter() MUST clear hasActiveTextSelection first to ensure cross-chapter analysis uses immediate update path (not deferred queue). pendingUndoRestore cleared on chapter change.",
+      "content": "WKWebView scroll/flicker prevention: JS injection for marker/color/undo updates (not loadHTMLString). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection + pendingMarkerUpdatesQueue. goToChapter() MUST clear hasActiveTextSelection first to ensure cross-chapter analysis uses immediate update path. Debug logging patch: 0001-Add-debug-logging-for-colorHex-update-flow-tracing.patch (reversible with git apply -R).",
+      "added_at": "2026-01-22T15:20:00.000000"
+    },
+    {
+      "type": "decision",
+      "content": "AI analysis runs in background. Panel only opens when tapping inline marker [1][2][3] or brain icon. Cross-chapter analysis persistence: use book.highlights for lookups (not currentChapterHighlights). Deferred queue is chapter-scoped - hasActiveTextSelection=false on other chapters ensures immediate path.",
       "added_at": "2026-01-22T14:20:00.000000"
     },
     {
       "type": "decision",
-      "content": "AI analysis runs in background. Panel only opens when tapping inline marker [1][2][3] or brain icon. Cross-chapter analysis persistence: use book.highlights.contains() for save checks. Deferred queue (pendingMarkerUpdatesQueue) is chapter-scoped - only contains updates for current chapter because hasActiveTextSelection=false on other chapters.",
-      "added_at": "2026-01-22T14:20:00.000000"
-    },
-    {
-      "type": "decision",
-      "content": "State Symmetry Principle: selectHighlight() sets 6 states. Cleanup paths: X button clears 4 (keeps panel open), deleteHighlight clears 6, goToChapter() clears 6 including hasActiveTextSelection (highlight selection is chapter-scoped). scrollToHighlightId cleared on chapter change. goToChapter() clears UI state but does NOT cancel background analysis Tasks.",
+      "content": "State Symmetry Principle: selectHighlight() sets 6 states. Cleanup paths: X button clears 4 (keeps panel open), deleteHighlight clears 6, goToChapter() clears 6 including hasActiveTextSelection (highlight selection is chapter-scoped). goToChapter() clears UI state but does NOT cancel background analysis Tasks.",
       "added_at": "2026-01-22T14:20:00.000000"
     }
   ],
   "manual_memories": [],
-  "realtime_memories": [
-    {
-      "type": "claude_response",
-      "content": "Memory consolidated (10 realtime → 0, 6 core memories with architecture clarification).",
-      "added_at": "2026-01-22T14:23:23.576934",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "OKAY good and very good now commit the changes Note there is the first changes of bug fixes that I already staged So if you see the git status those staged files I want to first git commit for these a",
-      "added_at": "2026-01-22T14:23:23.576958",
-      "source": "realtime_capture"
-    }
-  ],
+  "realtime_memories": [],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-22T14:23:23.576960"
+  "updated_at": "2026-01-22T15:20:00.000000"
 }

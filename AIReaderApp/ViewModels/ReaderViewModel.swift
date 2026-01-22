@@ -163,6 +163,11 @@ final class ReaderViewModel {
     func goToChapter(_ index: Int) {
         guard index >= 0 && index < chapterCount else { return }
 
+        #if DEBUG
+        print("[GoToChapter] Navigating from chapter \(currentChapterIndex) to \(index)")
+        print("[GoToChapter] hasActiveTextSelection=\(hasActiveTextSelection), pendingQueue=\(pendingMarkerUpdatesQueue.count)")
+        #endif
+
         // Clear active selection flag FIRST - chapter change ends any selection
         // This ensures applyDeferredMarkerUpdates() and analysis completions
         // use the immediate update path (not deferred queue)
@@ -171,6 +176,9 @@ final class ReaderViewModel {
         // Apply any deferred updates for current chapter before leaving
         // This ensures colorHex is saved even if user had active selection
         if !pendingMarkerUpdatesQueue.isEmpty {
+            #if DEBUG
+            print("[GoToChapter] Applying \(pendingMarkerUpdatesQueue.count) deferred updates before leaving")
+            #endif
             applyDeferredMarkerUpdates()
         }
 
@@ -255,8 +263,17 @@ final class ReaderViewModel {
         do {
             currentChapterHighlights = try modelContext.fetch(descriptor)
                 .filter { $0.book?.id == book.id }
+            #if DEBUG
+            print("[LoadHighlights] Chapter \(chapterIdx): Loaded \(currentChapterHighlights.count) highlights")
+            for h in currentChapterHighlights {
+                print("[LoadHighlights]   - \(h.id.uuidString.prefix(8)): colorHex=\(h.colorHex), analyses=\(h.analyses.count)")
+            }
+            #endif
         } catch {
             currentChapterHighlights = []
+            #if DEBUG
+            print("[LoadHighlights] ERROR loading highlights for chapter \(chapterIdx): \(error)")
+            #endif
         }
     }
 
@@ -527,10 +544,23 @@ final class ReaderViewModel {
         // This includes not updating colorHex in SwiftData (which would change hash → reload)
         if hasActiveTextSelection {
             pendingMarkerUpdatesQueue.append(markerUpdate)
+            #if DEBUG
+            print("[SaveAnalysis] DEFERRED colorHex update for highlight \(highlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
+            #endif
         } else {
             // Safe to update colorHex now - no active selection to disrupt
+            let oldColor = highlight.colorHex
             highlight.colorHex = type.colorHex
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+                #if DEBUG
+                print("[SaveAnalysis] IMMEDIATE colorHex update for highlight \(highlight.id.uuidString.prefix(8)): \(oldColor) → \(type.colorHex)")
+                #endif
+            } catch {
+                #if DEBUG
+                print("[SaveAnalysis] ERROR saving colorHex for highlight \(highlight.id.uuidString.prefix(8)): \(error)")
+                #endif
+            }
             pendingMarkerUpdate = markerUpdate
         }
     }
