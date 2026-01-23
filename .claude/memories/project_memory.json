@@ -22,25 +22,30 @@
     },
     {
       "type": "decision",
-      "content": "State Management Patterns: (1) Two Distinct Actions: performAnalysis() clears selectedAnalysis=nil for clean loading view; askFollowUpQuestion() captures analysisToFollowUp=selectedAnalysis at function START before any async work. (2) State Symmetry: All deselection paths (X button, goToChapter, deleteHighlight) must clear full state set: selectedHighlight, selectedText, analysisResult, currentAnalysisType, selectedAnalysis, isAnalyzing, customQuestion. (3) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight; isActiveJob = map[highlightId] == jobId; guards UI updates ONLY, not data persistence. (4) Job Cleanup Ownership: map removal must check map[highlightId] == jobId to prevent earlier job from orphaning later job's entry. (5) Duplicate Prevention: Use content-based detection (question+answer match) in addTurnToThread(), not job ordering. (6) Principle: User intent trumps background job completion - never overwrite explicit user selection.",
-      "added_at": "2026-01-23T08:00:00.000000"
+      "content": "State Management Patterns: (1) Atomic State Transitions: When multiple state variables represent a logical state, update them ALL together. selectHighlight() active job branch MUST set: isAnalyzing, analysisResult, selectedAnalysis=nil, currentAnalysisType=nil. (2) Two Distinct Actions: performAnalysis() clears selectedAnalysis=nil for clean loading view; askFollowUpQuestion() captures analysisToFollowUp=selectedAnalysis at function START before async work. (3) State Symmetry: All deselection paths (X button, goToChapter, deleteHighlight, selectHighlight active job) must clear full state set. (4) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight; isActiveJob guards UI updates ONLY, not data persistence. (5) Duplicate Prevention: Content-based detection (question+answer match) in addTurnToThread(). (6) Principle: User intent trumps background job completion.",
+      "added_at": "2026-01-23T18:00:00.000000"
+    },
+    {
+      "type": "bugfix",
+      "content": "selectHighlight() stale state bug (2026-01-23): Active job branch only updated isAnalyzing/analysisResult but left selectedAnalysis/currentAnalysisType stale from previous highlight. Fix: Added selectedAnalysis=nil, currentAnalysisType=nil in active job branch (L923-927). Root cause: Violated atomic state transition principle. Bug manifests when: Highlight A streaming → tap Highlight B → tap back to A. Full investigation documented in docs/bug-investigation-selectHighlight-stale-state.md.",
+      "added_at": "2026-01-23T18:00:00.000000"
     }
   ],
   "manual_memories": [],
   "realtime_memories": [
     {
       "type": "claude_response",
-      "content": "Consolidated: 11 → 5 memories. Cleared debug session fragments, updated decision memory with duplicate prevention pattern.",
-      "added_at": "2026-01-23T08:02:05.260644",
+      "content": "Memory consolidated: 11 → 6 memories. Cleared session fragments, updated state management decision with atomic transitions principle, added bugfix reference to investigation doc.",
+      "added_at": "2026-01-23T18:01:56.532330",
       "source": "realtime_capture"
     },
     {
       "type": "message",
-      "content": "Now with grounded deeo understanding anf the work all along the way, please help me best commit this with precise accurate and technical and concise commit message that cover all points that we did he",
-      "added_at": "2026-01-23T08:02:05.260668",
+      "content": "commit the staged files",
+      "added_at": "2026-01-23T18:01:56.532342",
       "source": "realtime_capture"
     }
   ],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-23T08:02:05.260670"
+  "updated_at": "2026-01-23T18:01:56.532343"
 }

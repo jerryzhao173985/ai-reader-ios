@@ -920,6 +920,11 @@ final class ReaderViewModel {
             } else {
                 analysisResult = nil
             }
+            // Clear stale selectedAnalysis from previous highlight
+            // During active streaming, UI shows streaming view (not conversation view)
+            // When job completes, saveAnalysis() will set selectedAnalysis appropriately
+            selectedAnalysis = nil
+            currentAnalysisType = nil
         } else {
             // No active job - load the most recent completed analysis
             let sortedAnalyses = freshHighlight.analyses.sorted(by: { $0.createdAt > $1.createdAt })
