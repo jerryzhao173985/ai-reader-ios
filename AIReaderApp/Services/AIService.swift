@@ -507,7 +507,8 @@ final class AnalysisJobManager {
         context: String,
         chapterContext: String? = nil,
         question: String? = nil,
-        history: [(question: String, answer: String)] = []
+        history: [(question: String, answer: String)] = [],
+        priorAnalysisContext: (type: AnalysisType, result: String)? = nil
     ) -> UUID {
         let jobId = UUID()
         jobs[jobId] = Job(id: jobId, status: .queued)
@@ -520,7 +521,8 @@ final class AnalysisJobManager {
                 context: context,
                 chapterContext: chapterContext,
                 question: question,
-                history: history
+                history: history,
+                priorAnalysisContext: priorAnalysisContext
             )
         }
 
@@ -534,7 +536,8 @@ final class AnalysisJobManager {
         context: String,
         chapterContext: String?,
         question: String?,
-        history: [(question: String, answer: String)]
+        history: [(question: String, answer: String)],
+        priorAnalysisContext: (type: AnalysisType, result: String)? = nil
     ) async {
         jobs[id]?.status = .running
 
@@ -546,7 +549,7 @@ final class AnalysisJobManager {
         }
 
         // Build the prompt based on analysis type
-        let prompt = buildPrompt(type: type, text: text, context: context, chapterContext: chapterContext, question: question, history: history)
+        let prompt = buildPrompt(type: type, text: text, context: context, chapterContext: chapterContext, question: question, history: history, priorAnalysisContext: priorAnalysisContext)
 
         jobs[id]?.status = .streaming
 
@@ -593,7 +596,8 @@ final class AnalysisJobManager {
         context: String,
         chapterContext: String?,
         question: String?,
-        history: [(question: String, answer: String)]
+        history: [(question: String, answer: String)],
+        priorAnalysisContext: (type: AnalysisType, result: String)? = nil
     ) -> String {
         switch type {
         case .factCheck:
@@ -754,6 +758,17 @@ final class AnalysisJobManager {
                 """
             }
 
+            // Include prior analysis context if user is asking a follow-up about a previous analysis
+            // This enables context-aware follow-ups like: "The fact check mentioned X - tell me more about Y"
+            if let prior = priorAnalysisContext {
+                prompt += """
+
+                **Previous AI Analysis (\(prior.type.displayName)):**
+                The user was viewing this analysis when they asked their question:
+                \(prior.result)
+                """
+            }
+
             if !history.isEmpty {
                 prompt += """
 
@@ -777,6 +792,7 @@ final class AnalysisJobManager {
             Answer the question directly and helpfully, drawing on:
             - The selected text and its context
             - Your general knowledge
+            - The previous AI analysis (if provided)
             - The conversation history (if any)
 
             Be thorough but concise. Use examples when helpful.

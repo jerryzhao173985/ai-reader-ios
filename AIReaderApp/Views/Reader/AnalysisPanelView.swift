@@ -72,6 +72,9 @@ struct AnalysisPanelView: View {
                     viewModel.selectedText = ""
                     viewModel.analysisResult = nil
                     viewModel.currentAnalysisType = nil
+                    viewModel.selectedAnalysis = nil
+                    viewModel.isAnalyzing = false  // Prevent stale loading state
+                    viewModel.customQuestion = ""  // Clear stale follow-up question
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -207,25 +210,70 @@ struct AnalysisPanelView: View {
     // MARK: - Current Analysis View (loading or result)
     @ViewBuilder
     private var currentAnalysisView: some View {
-        if viewModel.isAnalyzing {
-            // Loading State
-            HStack(spacing: 12) {
-                ProgressView()
-                    .scaleEffect(0.8)
-
-                Text("Analyzing...")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        // Any analysis with a thread OR streaming shows conversation view
+        // This allows follow-ups on Fact Check, Discussion, etc. - not just custom questions
+        if let analysis = viewModel.selectedAnalysis {
+            if analysis.thread != nil || viewModel.isAnalyzing {
+                // Has follow-ups or actively streaming - show conversation view
+                analysisConversationView(analysis)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                // No thread, not analyzing - just show the result
+                resultView(analysis.response)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .frame(maxWidth: .infinity, minHeight: 60)
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(settings.theme.backgroundColor.opacity(0.5))
-            )
+        } else if viewModel.isAnalyzing {
+            // New analysis starting (no selectedAnalysis yet) - show loading/streaming
+            VStack(alignment: .leading, spacing: 12) {
+                // Show the analysis type being created
+                if let type = viewModel.currentAnalysisType {
+                    Label(type.displayName, systemImage: type.iconName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(hex: type.colorHex) ?? settings.theme.accentColor)
+                }
+
+                // Show streaming result if available, otherwise show loading indicator
+                if let result = viewModel.analysisResult, !result.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        markdownText(result)
+                            .font(.subheadline)
+                            .foregroundStyle(settings.theme.textColor)
+                            .textSelection(.enabled)
+
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                            Text("Analyzing...")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(settings.theme.secondaryBackgroundColor.opacity(0.5))
+                    )
+                } else {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+
+                        Text("Analyzing...")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 60)
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(settings.theme.backgroundColor.opacity(0.5))
+                    )
+                }
+            }
             .transition(.opacity)
         } else if let result = viewModel.analysisResult {
-            // Result View
             resultView(result)
                 .transition(.opacity.combined(with: .move(edge: .top)))
         }
@@ -280,11 +328,165 @@ struct AnalysisPanelView: View {
         }
     }
 
+    // MARK: - Analysis Conversation View (for any analysis type with follow-ups)
+    /// Displays an analysis with its conversation thread
+    /// Works for all analysis types: Fact Check, Discussion, Custom Question, etc.
+    /// Each analysis type can have its own independent conversation thread
+    @ViewBuilder
+    private func analysisConversationView(_ analysis: AIAnalysisModel) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header with analysis type
+            Label(analysis.analysisType.displayName, systemImage: analysis.analysisType.iconName)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Color(hex: analysis.analysisType.colorHex) ?? settings.theme.accentColor)
+
+            // Initial content depends on analysis type
+            if analysis.analysisType == .customQuestion {
+                // Custom questions: show initial Q&A as chat bubbles
+                userMessageBubble(analysis.prompt)
+                aiMessageBubble(analysis.response)
+            } else {
+                // Other types (Fact Check, Discussion, etc.): show the analysis result
+                markdownText(analysis.response)
+                    .font(.subheadline)
+                    .foregroundStyle(settings.theme.textColor)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(settings.theme.secondaryBackgroundColor.opacity(0.5))
+                    )
+            }
+
+            // Follow-up turns (if any)
+            if let thread = analysis.thread, !thread.turns.isEmpty {
+                // Visual separator for non-custom-question analyses
+                if analysis.analysisType != .customQuestion {
+                    HStack {
+                        VStack { Divider() }
+                        Text("Follow-ups")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        VStack { Divider() }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
+                    userMessageBubble(turn.question)
+                    aiMessageBubble(turn.answer)
+                }
+            }
+
+            // Current question being asked (if actively analyzing)
+            if viewModel.isAnalyzing {
+                // Show separator if this is the first follow-up on a non-custom analysis
+                if analysis.analysisType != .customQuestion && (analysis.thread?.turns.isEmpty ?? true) {
+                    HStack {
+                        VStack { Divider() }
+                        Text("Follow-ups")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        VStack { Divider() }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                userMessageBubble(viewModel.customQuestion.isEmpty ? "..." : viewModel.customQuestion)
+
+                // Show streaming response or "thinking" indicator
+                if let streaming = viewModel.analysisResult, !streaming.isEmpty {
+                    aiMessageBubble(streaming, isStreaming: true)
+                } else {
+                    // AI is starting to think - show loading bubble
+                    thinkingBubble
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(settings.theme.backgroundColor)
+        )
+    }
+
+    // MARK: - Chat Bubble Components
+    /// User message bubble - right-aligned with accent color
+    private func userMessageBubble(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: 40)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(settings.theme.accentColor)
+                )
+        }
+    }
+
+    /// AI message bubble - left-aligned with secondary background
+    private func aiMessageBubble(_ text: String, isStreaming: Bool = false) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                markdownText(text)
+                    .font(.subheadline)
+                    .foregroundStyle(settings.theme.textColor)
+                    .textSelection(.enabled)
+
+                if isStreaming {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Thinking...")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(settings.theme.secondaryBackgroundColor)
+            )
+            Spacer(minLength: 40)
+        }
+    }
+
+    /// Thinking indicator bubble - shown when AI is processing but no output yet
+    private var thinkingBubble: some View {
+        HStack {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Thinking...")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(settings.theme.secondaryBackgroundColor)
+            )
+            Spacer(minLength: 40)
+        }
+    }
+
     private func previousAnalysisCard(_ analysis: AIAnalysisModel) -> some View {
         Button {
+            #if DEBUG
+            print("[CardTap] Tapped \(analysis.analysisType.displayName) id=\(analysis.id.uuidString.prefix(8))")
+            #endif
             // Show this analysis's full response in the current result area
             viewModel.currentAnalysisType = analysis.analysisType
             viewModel.analysisResult = analysis.response
+            viewModel.selectedAnalysis = analysis  // Track for conversation view
             viewModel.isAnalyzing = false
         } label: {
             VStack(alignment: .leading, spacing: 8) {
@@ -303,6 +505,15 @@ struct AnalysisPanelView: View {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+
+                // Show the question asked for custom questions
+                if analysis.analysisType == .customQuestion {
+                    Text("Q: \(analysis.prompt)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .italic()
                 }
 
                 markdownText(analysis.response)

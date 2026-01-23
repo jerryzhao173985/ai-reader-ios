@@ -65,6 +65,8 @@ final class ReaderViewModel {
     var isAnalyzing = false
     var analysisResult: String?
     var customQuestion: String = ""
+    /// Currently selected analysis for conversation display (especially custom questions)
+    var selectedAnalysis: AIAnalysisModel?
 
     // Context Menu
     var showingContextMenu = false
@@ -190,6 +192,9 @@ final class ReaderViewModel {
         selectedText = ""
         analysisResult = nil
         currentAnalysisType = nil
+        selectedAnalysis = nil
+        isAnalyzing = false  // Prevent stale loading state in new chapter
+        customQuestion = ""  // Clear stale follow-up question
 
         currentChapterIndex = index
         scrollOffset = 0
@@ -357,7 +362,9 @@ final class ReaderViewModel {
             selectedText = ""
             analysisResult = nil
             currentAnalysisType = nil
+            selectedAnalysis = nil  // Clear stale analysis reference
             isAnalyzing = false
+            customQuestion = ""  // Clear stale follow-up question
             showingAnalysisPanel = false
         }
     }
@@ -447,9 +454,17 @@ final class ReaderViewModel {
     func performAnalysis(type: AnalysisType, text: String, context: String, question: String? = nil) {
         guard let highlight = selectedHighlight else { return }
 
+        #if DEBUG
+        print("[Analysis] START: type=\(type.displayName) highlight=\(highlight.id.uuidString.prefix(8)) prevSelected=\(selectedAnalysis?.analysisType.displayName ?? "nil")")
+        #endif
+
         isAnalyzing = true
         currentAnalysisType = type
         analysisResult = nil
+        // Clear selectedAnalysis so UI shows loading state (not streaming under old thread)
+        // When user clicks "Key Points" while viewing "Discussion", we want a clean loading view
+        // for Key Points - not Key Points streaming under Discussion's "Follow-ups" section
+        selectedAnalysis = nil
 
         let jobId = analysisJobManager.queueAnalysis(
             type: type,
@@ -473,18 +488,22 @@ final class ReaderViewModel {
                 switch job.status {
                 case .streaming:
                     await MainActor.run {
-                        // Only update analysisResult if this is the CURRENTLY SELECTED highlight
-                        // This prevents parallel analyses from overwriting each other's display
+                        // Only update analysisResult if:
+                        // 1. This is the currently selected highlight
+                        // 2. This is the active job for this highlight (prevents parallel job flickering)
                         if !job.streamingResult.isEmpty,
-                           selectedHighlight?.id == highlightId {
+                           selectedHighlight?.id == highlightId,
+                           highlightToJobMap[highlightId] == jobId {
                             analysisResult = job.streamingResult
                         }
                     }
                 case .completed:
                     await MainActor.run {
                         if let result = job.result {
-                            // Only update display if this highlight is still selected
-                            if selectedHighlight?.id == highlightId {
+                            // Only update UI state if this is still the active job for this highlight
+                            // Prevents older job from overwriting newer job's streaming state
+                            let isActiveJob = highlightToJobMap[highlightId] == jobId
+                            if selectedHighlight?.id == highlightId && isActiveJob {
                                 analysisResult = result
                                 isAnalyzing = false
                             }
@@ -496,12 +515,16 @@ final class ReaderViewModel {
                                     to: highlight,
                                     type: type,
                                     prompt: question ?? text,
-                                    response: result
+                                    response: result,
+                                    isActiveJob: isActiveJob
                                 )
                             }
                         }
-                        // Clean up job mapping
-                        highlightToJobMap.removeValue(forKey: highlightId)
+                        // Clean up job mapping only if this job is still the tracked one
+                        // Prevents earlier job from removing a later job's entry
+                        if highlightToJobMap[highlightId] == jobId {
+                            highlightToJobMap.removeValue(forKey: highlightId)
+                        }
                     }
                     return
                 case .error:
@@ -510,7 +533,10 @@ final class ReaderViewModel {
                             analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
                             isAnalyzing = false
                         }
-                        highlightToJobMap.removeValue(forKey: highlightId)
+                        // Only remove if this job is still the tracked one
+                        if highlightToJobMap[highlightId] == jobId {
+                            highlightToJobMap.removeValue(forKey: highlightId)
+                        }
                     }
                     return
                 case .queued, .running:
@@ -520,7 +546,7 @@ final class ReaderViewModel {
         }
     }
 
-    func saveAnalysis(to highlight: HighlightModel, type: AnalysisType, prompt: String, response: String) {
+    func saveAnalysis(to highlight: HighlightModel, type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true) {
         let analysis = AIAnalysisModel(
             analysisType: type,
             prompt: prompt,
@@ -534,6 +560,24 @@ final class ReaderViewModel {
 
         modelContext.insert(analysis)
         try? modelContext.save()
+
+        // Only update selectedAnalysis if:
+        // 1. This highlight is still selected
+        // 2. This is the active job (no newer job has taken over)
+        // 3. User hasn't explicitly selected a different analysis while waiting
+        //    (performAnalysis sets selectedAnalysis=nil, so non-nil means user tapped a card)
+        // Prevents older job from overwriting newer job's streaming UI state
+        // AND prevents overwriting explicit user selection
+        let userHasNotExplicitlySelectedAnother = selectedAnalysis == nil
+        #if DEBUG
+        print("[SaveAnalysis] type=\(type.displayName) id=\(analysis.id.uuidString.prefix(8)) isActiveJob=\(isActiveJob) userHasNotSelected=\(userHasNotExplicitlySelectedAnother)")
+        #endif
+        if selectedHighlight?.id == highlight.id && isActiveJob && userHasNotExplicitlySelectedAnother {
+            #if DEBUG
+            print("[SaveAnalysis] → Setting selectedAnalysis to \(type.displayName)")
+            #endif
+            selectedAnalysis = analysis
+        }
 
         // Update marker via JS injection (no page reload, preserves scroll & selection)
         // The highlight.analyses array is already updated in memory (reference type)
@@ -617,28 +661,51 @@ final class ReaderViewModel {
     }
 
     func askFollowUpQuestion(highlight: HighlightModel, question: String) {
+        // Use the currently viewed analysis for follow-up
+        // Each analysis type (Fact Check, Discussion, etc.) has its OWN conversation thread
+        // If no analysis is selected, we're starting a fresh custom question
+        let analysisToFollowUp = selectedAnalysis
+
+        #if DEBUG
+        print("[FollowUp] START: question='\(question.prefix(20))...' analysisToFollowUp=\(analysisToFollowUp?.analysisType.displayName ?? "nil") id=\(analysisToFollowUp?.id.uuidString.prefix(8) ?? "nil")")
+        #endif
+
         isAnalyzing = true
-        currentAnalysisType = .customQuestion
         analysisResult = nil
+        customQuestion = question  // Track current question for streaming display
 
-        // Get existing custom question analysis (if any) for conversation history
-        let existingAnalysis = highlight.analyses.last(where: { $0.analysisType == .customQuestion })
+        // Keep the current analysis type (don't switch to .customQuestion)
+        // This way the UI knows to show the appropriate conversation view for this analysis
+        if let analysis = analysisToFollowUp {
+            currentAnalysisType = analysis.analysisType
+        } else {
+            currentAnalysisType = .customQuestion
+        }
 
-        // Get conversation history from existing thread
+        // Build priorAnalysisContext from the analysis being followed up
+        // This includes the initial analysis result so AI knows the context
+        var priorAnalysisContext: (type: AnalysisType, result: String)?
+        if let analysis = analysisToFollowUp {
+            priorAnalysisContext = (type: analysis.analysisType, result: analysis.response)
+        }
+
+        // Build conversation history from existing thread turns
+        // The initial analysis result is already in priorAnalysisContext
         var history: [(question: String, answer: String)] = []
-        if let thread = existingAnalysis?.thread {
+        if let thread = analysisToFollowUp?.thread {
             history = thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex }).map {
                 (question: $0.question, answer: $0.answer)
             }
         }
 
         let jobId = analysisJobManager.queueAnalysis(
-            type: .customQuestion,
+            type: .customQuestion,  // API call type (it's always a question to the AI)
             text: highlight.selectedText,
             context: highlight.fullContext,
             chapterContext: currentChapter?.plainText,
             question: question,
-            history: history
+            history: history,
+            priorAnalysisContext: priorAnalysisContext
         )
 
         // Track which job belongs to which highlight for proper streaming display
@@ -656,18 +723,23 @@ final class ReaderViewModel {
                 switch job.status {
                 case .streaming:
                     // Update with streaming result for real-time display
-                    // Only update if this is the CURRENTLY SELECTED highlight (parallel isolation)
+                    // Only update if:
+                    // 1. This is the currently selected highlight
+                    // 2. This is the active job for this highlight (prevents parallel job flickering)
                     await MainActor.run {
                         if !job.streamingResult.isEmpty,
-                           selectedHighlight?.id == highlightId {
+                           selectedHighlight?.id == highlightId,
+                           highlightToJobMap[highlightId] == jobId {
                             analysisResult = job.streamingResult
                         }
                     }
                 case .completed:
                     await MainActor.run {
                         if let result = job.result {
-                            // Only update display if this highlight is still selected
-                            if selectedHighlight?.id == highlightId {
+                            // Only update UI state if this is still the active job for this highlight
+                            // Prevents older job from overwriting newer job's streaming state
+                            let isActiveJob = highlightToJobMap[highlightId] == jobId
+                            if selectedHighlight?.id == highlightId && isActiveJob {
                                 analysisResult = result
                                 isAnalyzing = false
                             }
@@ -676,39 +748,97 @@ final class ReaderViewModel {
                             // Use book.highlights (not currentChapterHighlights) so analysis saves
                             // even when user switches chapters during background processing
                             if book.highlights.contains(where: { $0.id == highlightId }) {
-                                if let analysis = existingAnalysis {
-                                    // Add to existing thread
+                                if let analysis = analysisToFollowUp {
+                                    // Add turn to the analysis thread
+                                    // Note: addTurnToThread has built-in duplicate detection to prevent
+                                    // double-tap from creating duplicate turns
                                     addTurnToThread(analysis: analysis, question: question, answer: result)
+                                    #if DEBUG
+                                    print("[FollowUp] COMPLETE: Added turn to \(analysis.analysisType.displayName) id=\(analysis.id.uuidString.prefix(8))")
+                                    #endif
+                                    // Only update selectedAnalysis if:
+                                    // 1. Highlight is still selected
+                                    // 2. This is the active job (no newer job has taken over)
+                                    // 3. User hasn't switched to a different analysis (respect explicit user choice)
+                                    let userStillViewingSameAnalysis = selectedAnalysis?.id == analysis.id || selectedAnalysis == nil
+                                    #if DEBUG
+                                    print("[FollowUp] Check: isActiveJob=\(isActiveJob) userStillViewingSame=\(userStillViewingSameAnalysis) currentSelected=\(selectedAnalysis?.analysisType.displayName ?? "nil")")
+                                    #endif
+                                    if selectedHighlight?.id == highlightId && isActiveJob && userStillViewingSameAnalysis {
+                                        selectedAnalysis = analysis
+                                    }
                                 } else {
-                                    // Create new analysis with first Q&A
-                                    let analysis = AIAnalysisModel(
-                                        analysisType: .customQuestion,
-                                        prompt: question,
-                                        response: result
-                                    )
-                                    analysis.highlight = highlight
-                                    highlight.analyses.append(analysis)
-                                    // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
-                                    modelContext.insert(analysis)
-                                    try? modelContext.save()
-
-                                    // Use same deferral logic as saveAnalysis() for colorHex and marker updates
-                                    let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
-                                    if hasActiveTextSelection {
-                                        pendingMarkerUpdatesQueue.append(markerUpdate)
-                                    } else {
-                                        highlight.colorHex = AnalysisType.customQuestion.colorHex
-                                        try? modelContext.save()
-                                        pendingMarkerUpdate = markerUpdate
+                                    // No analysis was selected - create new custom question analysis
+                                    // Check if an identical custom question already exists (double-tap protection)
+                                    let isDuplicate = highlight.analyses.contains { existing in
+                                        existing.analysisType == .customQuestion &&
+                                        existing.prompt == question &&
+                                        existing.response == result
                                     }
 
-                                    // Add the first turn to thread
-                                    addTurnToThread(analysis: analysis, question: question, answer: result)
+                                    if isDuplicate {
+                                        #if DEBUG
+                                        print("[FollowUp] SKIPPED: Duplicate custom question already exists")
+                                        #endif
+                                    } else {
+                                        let analysis = AIAnalysisModel(
+                                            analysisType: .customQuestion,
+                                            prompt: question,
+                                            response: result
+                                        )
+                                        analysis.highlight = highlight
+                                        highlight.analyses.append(analysis)
+                                        // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
+                                        modelContext.insert(analysis)
+                                        try? modelContext.save()
+
+                                        #if DEBUG
+                                        print("[FollowUp] COMPLETE: Created new custom question id=\(analysis.id.uuidString.prefix(8))")
+                                        #endif
+
+                                        // Only update selectedAnalysis if:
+                                        // 1. Highlight is still selected
+                                        // 2. This is the active job (no newer job has taken over)
+                                        // 3. User hasn't selected a different analysis since starting this question
+                                        //    (respect explicit user choice - they started with nil, if now non-nil they tapped something)
+                                        let userStillHasNoAnalysisSelected = selectedAnalysis == nil
+                                        if selectedHighlight?.id == highlightId && isActiveJob && userStillHasNoAnalysisSelected {
+                                            selectedAnalysis = analysis
+                                        }
+
+                                        // Use same deferral logic as saveAnalysis() for colorHex and marker updates
+                                        let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
+                                        if hasActiveTextSelection {
+                                            pendingMarkerUpdatesQueue.append(markerUpdate)
+                                            #if DEBUG
+                                            print("[FollowUp] DEFERRED colorHex update for highlight \(highlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
+                                            #endif
+                                        } else {
+                                            let oldColor = highlight.colorHex
+                                            highlight.colorHex = AnalysisType.customQuestion.colorHex
+                                            do {
+                                                try modelContext.save()
+                                                #if DEBUG
+                                                print("[FollowUp] IMMEDIATE colorHex update for highlight \(highlight.id.uuidString.prefix(8)): \(oldColor) → \(AnalysisType.customQuestion.colorHex)")
+                                                #endif
+                                            } catch {
+                                                #if DEBUG
+                                                print("[FollowUp] ERROR saving colorHex for highlight \(highlight.id.uuidString.prefix(8)): \(error)")
+                                                #endif
+                                            }
+                                            pendingMarkerUpdate = markerUpdate
+                                        }
+                                        // Initial Q&A stored in prompt/response - no turn needed
+                                        // Turns are for FOLLOW-UP questions only
+                                    }
                                 }
                             }
                         }
-                        // Clean up job mapping
-                        highlightToJobMap.removeValue(forKey: highlightId)
+                        // Clean up job mapping only if this job is still the tracked one
+                        // Prevents earlier job from removing a later job's entry
+                        if highlightToJobMap[highlightId] == jobId {
+                            highlightToJobMap.removeValue(forKey: highlightId)
+                        }
                     }
                     return
                 case .error:
@@ -717,7 +847,10 @@ final class ReaderViewModel {
                             analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
                             isAnalyzing = false
                         }
-                        highlightToJobMap.removeValue(forKey: highlightId)
+                        // Only remove if this job is still the tracked one
+                        if highlightToJobMap[highlightId] == jobId {
+                            highlightToJobMap.removeValue(forKey: highlightId)
+                        }
                     }
                     return
                 case .queued, .running:
@@ -728,6 +861,18 @@ final class ReaderViewModel {
     }
 
     private func addTurnToThread(analysis: AIAnalysisModel, question: String, answer: String) {
+        // Check for duplicate turn (same question AND same answer already exists)
+        // This prevents double-tap from creating duplicate turns
+        // Note: We check both question AND answer because the same question asked twice
+        // at different times could legitimately have different answers
+        if let existingTurns = analysis.thread?.turns,
+           existingTurns.contains(where: { $0.question == question && $0.answer == answer }) {
+            #if DEBUG
+            print("[AddTurn] SKIPPED: Duplicate turn already exists (question='\(question.prefix(20))...')")
+            #endif
+            return
+        }
+
         if analysis.thread == nil {
             let thread = AnalysisThreadModel()
             thread.analysis = analysis
@@ -781,11 +926,13 @@ final class ReaderViewModel {
             if let mostRecent = sortedAnalyses.first {
                 currentAnalysisType = mostRecent.analysisType
                 analysisResult = mostRecent.response
+                selectedAnalysis = mostRecent
                 isAnalyzing = false
             } else {
                 // No analyses yet - clear result
                 currentAnalysisType = nil
                 analysisResult = nil
+                selectedAnalysis = nil
                 isAnalyzing = false
             }
         }
