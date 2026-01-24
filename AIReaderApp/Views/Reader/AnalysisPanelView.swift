@@ -18,6 +18,10 @@ struct AnalysisPanelView: View {
     /// Set before clearing selectedHighlight, then consumed after UI transition to scroll to that card
     @State private var scrollToHighlightOnReturn: UUID? = nil
 
+    /// Tracks when to scroll to a specific analysis position after switching analyses
+    /// For simple analysis: scrolls to top. For conversation: scrolls to last turn
+    @State private var scrollToAnalysisId: UUID? = nil
+
     // MARK: - Markdown Text Helper
     /// Renders markdown text with fallback to plain text if parsing fails
     private func markdownText(_ string: String) -> Text {
@@ -63,6 +67,44 @@ struct AnalysisPanelView: View {
                             proxy.scrollTo(highlightId, anchor: .center)
                         }
                         scrollToHighlightOnReturn = nil
+                    }
+                }
+                .onChange(of: scrollToAnalysisId) { _, analysisId in
+                    // When switching between analyses (card tap), scroll to appropriate position:
+                    // - Simple analysis (no follow-ups): scroll to top of analysis
+                    // - Conversation analysis (has follow-ups): scroll to last turn (most recent Q&A)
+                    guard let analysisId,
+                          let analysis = viewModel.selectedAnalysis,
+                          analysis.id == analysisId else {
+                        scrollToAnalysisId = nil
+                        return
+                    }
+
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        if let thread = analysis.thread,
+                           !thread.turns.isEmpty,
+                           let lastTurn = thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex }).last {
+                            // Conversation with follow-ups: scroll to last turn
+                            proxy.scrollTo(lastTurn.id, anchor: .top)
+                        } else {
+                            // Simple analysis or no turns yet: scroll to top
+                            proxy.scrollTo("analysis-content-top", anchor: .top)
+                        }
+                    }
+                    scrollToAnalysisId = nil
+                }
+                .onChange(of: viewModel.isAnalyzing) { wasAnalyzing, isAnalyzing in
+                    // When starting a NEW analysis (not follow-up), scroll to top
+                    // This handles: user selects analysis type from menu while viewing another analysis
+                    // selectedAnalysis == nil means it's a new analysis, not a follow-up
+                    if isAnalyzing && !wasAnalyzing && viewModel.selectedAnalysis == nil {
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            proxy.scrollTo("analysis-content-top", anchor: .top)
+                        }
                     }
                 }
             }
@@ -214,6 +256,7 @@ struct AnalysisPanelView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Current Analysis Area (loading or result)
             currentAnalysisView
+                .id("analysis-content-top")  // Enable ScrollViewReader scroll target
                 .animation(.easeInOut(duration: 0.2), value: viewModel.isAnalyzing)
                 .animation(.easeInOut(duration: 0.2), value: viewModel.analysisResult != nil)
 
@@ -399,8 +442,11 @@ struct AnalysisPanelView: View {
                 }
 
                 ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
-                    userMessageBubble(turn.question)
-                    aiMessageBubble(turn.answer)
+                    VStack(alignment: .leading, spacing: 8) {
+                        userMessageBubble(turn.question)
+                        aiMessageBubble(turn.answer)
+                    }
+                    .id(turn.id)  // Enable ScrollViewReader targeting for conversation scroll
                 }
             }
 
@@ -513,6 +559,10 @@ struct AnalysisPanelView: View {
             viewModel.analysisResult = analysis.response
             viewModel.selectedAnalysis = analysis  // Track for conversation view
             viewModel.isAnalyzing = false
+
+            // Trigger scroll to appropriate position for this analysis
+            // Simple analysis: scroll to top. Conversation: scroll to last turn.
+            scrollToAnalysisId = analysis.id
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
