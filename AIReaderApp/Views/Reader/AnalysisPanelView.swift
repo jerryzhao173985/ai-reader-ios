@@ -14,6 +14,10 @@ struct AnalysisPanelView: View {
     @State private var followUpQuestion = ""
     @FocusState private var isQuestionFocused: Bool
 
+    /// Tracks the highlight ID to scroll to when returning from analysis view to chapter highlights list
+    /// Set before clearing selectedHighlight, then consumed after UI transition to scroll to that card
+    @State private var scrollToHighlightOnReturn: UUID? = nil
+
     // MARK: - Markdown Text Helper
     /// Renders markdown text with fallback to plain text if parsing fails
     private func markdownText(_ string: String) -> Text {
@@ -32,18 +36,35 @@ struct AnalysisPanelView: View {
             Divider()
 
             // Content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let highlight = viewModel.selectedHighlight {
-                        selectedTextSection(highlight)
-                        analysisSection(highlight)
-                    } else if !viewModel.selectedText.isEmpty {
-                        pendingSelectionSection
-                    } else {
-                        emptyStateSection
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let highlight = viewModel.selectedHighlight {
+                            selectedTextSection(highlight)
+                            analysisSection(highlight)
+                        } else if !viewModel.selectedText.isEmpty {
+                            pendingSelectionSection
+                        } else {
+                            emptyStateSection
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: scrollToHighlightOnReturn) { _, highlightId in
+                    // When returning from analysis view to chapter highlights list,
+                    // position at the previously viewed highlight's card (centered)
+                    // NO animation - user should see the list already at the right position
+                    if let highlightId, viewModel.selectedHighlight == nil {
+                        // Disable all animations for instant positioning
+                        // This makes the panel appear already centered at the card
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            proxy.scrollTo(highlightId, anchor: .center)
+                        }
+                        scrollToHighlightOnReturn = nil
                     }
                 }
-                .padding()
             }
 
             // Follow-up Question Input
@@ -65,6 +86,10 @@ struct AnalysisPanelView: View {
 
             if viewModel.selectedHighlight != nil {
                 Button {
+                    // Remember which highlight to scroll to when returning to chapter highlights list
+                    // This creates a fluid UX: user sees the card they just closed in the middle of the list
+                    scrollToHighlightOnReturn = viewModel.selectedHighlight?.id
+
                     // Clear ALL selection-related state to return to chapter highlights view
                     // selectedText must be cleared because selectHighlight() sets it,
                     // and non-empty selectedText shows pendingSelectionSection instead of emptyStateSection
@@ -608,6 +633,7 @@ struct AnalysisPanelView: View {
 
             ForEach(viewModel.currentChapterHighlights.sorted(by: { $0.startOffset < $1.startOffset })) { highlight in
                 chapterHighlightRow(highlight)
+                    .id(highlight.id)  // Enable ScrollViewReader.scrollTo() targeting
             }
 
             // Hint to create more
