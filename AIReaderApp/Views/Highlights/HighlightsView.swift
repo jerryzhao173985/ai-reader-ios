@@ -318,14 +318,28 @@ struct HighlightRow: View {
 
             // Metadata
             HStack {
-                // Analysis Types
+                // Analysis Types + Count
                 if !highlight.analyses.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(Array(Set(highlight.analyses.map(\.analysisType))), id: \.self) { type in
-                            Image(systemName: type.iconName)
-                                .font(.caption2)
-                                .foregroundStyle(Color(hex: type.colorHex) ?? .secondary)
+                    HStack(spacing: 6) {
+                        // Type icons (unique types only)
+                        HStack(spacing: 4) {
+                            ForEach(Array(Set(highlight.analyses.map(\.analysisType))), id: \.self) { type in
+                                Image(systemName: type.iconName)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(hex: type.colorHex) ?? .secondary)
+                            }
                         }
+
+                        // Analysis count badge - shows total number of analysis threads
+                        Text("\(highlight.analyses.count)")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(Color(hex: highlight.colorHex ?? "#888888") ?? .gray)
+                            )
                     }
                 }
 

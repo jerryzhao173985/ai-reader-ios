@@ -743,14 +743,29 @@ struct AnalysisPanelView: View {
                     .multilineTextAlignment(.leading)
 
                 HStack(spacing: 8) {
-                    // Analysis type icons
+                    // Analysis type icons + count badge
                     if !highlight.analyses.isEmpty {
-                        HStack(spacing: 4) {
-                            ForEach(Array(Set(highlight.analyses.map(\.analysisType))), id: \.self) { type in
-                                Image(systemName: type.iconName)
-                                    .font(.caption2)
-                                    .foregroundStyle(Color(hex: type.colorHex) ?? .secondary)
+                        HStack(spacing: 6) {
+                            // Type icons (unique types only)
+                            HStack(spacing: 4) {
+                                ForEach(Array(Set(highlight.analyses.map(\.analysisType))), id: \.self) { type in
+                                    Image(systemName: type.iconName)
+                                        .font(.caption2)
+                                        .foregroundStyle(Color(hex: type.colorHex) ?? .secondary)
+                                }
                             }
+
+                            // Analysis count badge - shows total number of analysis threads
+                            // This tells readers: "N threads of analysis on this selection"
+                            Text("\(highlight.analyses.count)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule()
+                                        .fill(Color(hex: highlight.colorHex ?? "#888888") ?? .gray)
+                                )
                         }
                     } else {
                         Text("No analysis yet")
