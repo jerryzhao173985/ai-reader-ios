@@ -409,15 +409,15 @@ struct ChapterWebView: UIViewRepresentable {
         // Handle pending marker update via JS injection (no reload, no flicker)
         // This is triggered when analysis completes - update marker text AND highlight color
         // IMPORTANT: Only skip reload if no new highlights were added (checked via isHighlightUpdate)
-        // Check if this is a NEW update (different highlight OR different color)
+        // Check if this is a NEW update (different highlight OR color OR count)
         let isNewMarkerUpdate: Bool = {
             guard let update = pendingMarkerUpdate else { return false }
             guard let last = context.coordinator.lastHandledMarkerUpdate else { return true }
-            return update.highlightId != last.highlightId || update.colorHex != last.colorHex
+            return update.highlightId != last.highlightId || update.colorHex != last.colorHex || update.analysisCount != last.analysisCount
         }()
 
         if let update = pendingMarkerUpdate, isNewMarkerUpdate {
-            context.coordinator.lastHandledMarkerUpdate = (update.highlightId, update.colorHex)
+            context.coordinator.lastHandledMarkerUpdate = (update.highlightId, update.colorHex, update.analysisCount)
             context.coordinator.injectMarkerUpdate(
                 webView: webView,
                 highlightId: update.highlightId,
@@ -990,8 +990,8 @@ struct ChapterWebView: UIViewRepresentable {
         /// NOT cleared after restoration - kept for subsequent rapid loads until user manually scrolls
         private var pendingScrollPosition: CGFloat?
         /// Last handled marker update to prevent duplicate handling
-        /// Tracks both highlightId AND colorHex so color changes on same highlight are processed
-        var lastHandledMarkerUpdate: (highlightId: UUID, colorHex: String)?
+        /// Tracks highlightId, colorHex, AND analysisCount so any change triggers update
+        var lastHandledMarkerUpdate: (highlightId: UUID, colorHex: String, analysisCount: Int)?
         /// Track highlight IDs to detect structural changes (add/remove) vs visual changes (color/count)
         var lastHighlightIds: Set<UUID> = []
 

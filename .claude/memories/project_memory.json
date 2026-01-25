@@ -27,12 +27,73 @@
     },
     {
       "type": "bugfix",
-      "content": "Delete analysis race conditions (2026-01-24): askFollowUpQuestion guard verifies analysis still exists before addTurnToThread. Color sync bug (2026-01-25): ChapterContentView deduplication was only checking highlightId, blocking color changes on same highlight. Fix: track (highlightId, colorHex) tuple so color changes trigger WKWebView JS injection.",
-      "added_at": "2026-01-25T00:10:00.000000"
+      "content": "Delete analysis race conditions (2026-01-24): askFollowUpQuestion guard verifies analysis still exists before addTurnToThread. Color sync bugs (2026-01-25): (1) ChapterContentView deduplication was only checking highlightId, blocking color changes on same highlight - fix: track (highlightId, colorHex) tuple. (2) deleteAnalysis() unconditionally set color to most recent remaining, even when deleting non-selected analysis - fix: when wasSelected=false, keep current highlight.colorHex unchanged (prevents color/selection mismatch with 3+ analyses).",
+      "added_at": "2026-01-25T01:00:00.000000"
     }
   ],
   "manual_memories": [],
-  "realtime_memories": [],
+  "realtime_memories": [
+    {
+      "type": "claude_response",
+      "content": "The commit has been amended successfully. Your branch is now 2 commits ahead of `origin/main` with the complete, correct implementation.\n\n**Summary of what's committed:**\n- `selectAnalysis()` - centra",
+      "added_at": "2026-01-25T12:46:03.952957",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "message",
+      "content": "Great, now I want you to carefully read over all of the new code you just wrote and other existing code you just modified with \"fresh eyes,\" looking super carefully for any obvious bugs, errors, probl",
+      "added_at": "2026-01-25T12:46:03.952973",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "claude_response",
+      "content": "---\n\n## Fresh Eyes Review Complete\n\n### Bugs Found and Fixed\n\n| # | Location | Bug | Fix |\n|---|----------|-----|-----|\n| 1 | `deleteAnalysis()` | Color changed to most recent even when deleting non-s",
+      "added_at": "2026-01-25T12:56:55.972569",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "message",
+      "content": "This changed you made is this really true and actual real correct scenario and there is really this issue, and if this is really useful and helpful and the fixes really solve the root case and find th",
+      "added_at": "2026-01-25T12:56:55.972588",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "claude_response",
+      "content": "Now I have the complete picture. Let me trace through the **exact scenario**:\n\n**Scenario: Delete a non-selected analysis**\n\n| Step | Action | Result |\n|------|--------|--------|\n| 1 | User views Fact",
+      "added_at": "2026-01-25T15:20:19.385850",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "claude_response",
+      "content": "**With the NEW code (checking highlightId + colorHex + analysisCount):**\n\nSame scenario:\n1. `lastHandledMarkerUpdate = (H.id, green, 2)`\n2. `pendingMarkerUpdate = (H.id, 1, green)`\n3. `isNewMarkerUpda",
+      "added_at": "2026-01-25T15:53:14.725363",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "message",
+      "content": "As yuou just analyzed in details please align well with your changes in code to see if this is realy ther best accurate and perfect and useful",
+      "added_at": "2026-01-25T15:53:14.725376",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "claude_response",
+      "content": "Let me trace through specific scenarios to verify the code matches the analysis:\n\n---\n\n## Scenario 1: Delete Non-Selected Analysis\n\n**Setup**: Highlight has Fact Check (green) + Discussion (blue). Use",
+      "added_at": "2026-01-25T15:58:31.004740",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "claude_response",
+      "content": "---\n\n## Honest Reassessment\n\nAfter tracing through the code with fresh eyes, here's the truth:\n\n### What the Marker Actually Shows\n\nThe marker displays `[N]` where **N is the highlight's index** (1st,",
+      "added_at": "2026-01-25T16:03:52.058303",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "message",
+      "content": "Now commit your changes as you well investigated with deep concrete knowledge and you have verified the completeness usablity and improvement.",
+      "added_at": "2026-01-25T16:03:52.058320",
+      "source": "realtime_capture"
+    }
+  ],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-25T00:15:00.000000"
+  "updated_at": "2026-01-25T16:03:52.058321"
 }
