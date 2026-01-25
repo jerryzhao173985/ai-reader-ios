@@ -260,15 +260,21 @@ struct AnalysisPanelView: View {
                 .animation(.easeInOut(duration: 0.2), value: viewModel.isAnalyzing)
                 .animation(.easeInOut(duration: 0.2), value: viewModel.analysisResult != nil)
 
-            // Previous Analyses
-            if !highlight.analyses.isEmpty {
+            // Previous Analyses (sorted by most recent first)
+            // Filter out the currently selected analysis to avoid duplicate display
+            // (it's already shown in currentAnalysisView above)
+            let otherAnalyses = highlight.analyses
+                .filter { $0.id != viewModel.selectedAnalysis?.id }
+                .sorted(by: { $0.createdAt > $1.createdAt })
+
+            if !otherAnalyses.isEmpty {
                 Text("Previous Analyses")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .padding(.top, 8)
 
-                ForEach(highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt })) { analysis in
+                ForEach(otherAnalyses) { analysis in
                     previousAnalysisCard(analysis)
                 }
             }
@@ -549,80 +555,98 @@ struct AnalysisPanelView: View {
         }
     }
 
+    /// Previous analysis card with tap to open and X button to delete
     private func previousAnalysisCard(_ analysis: AIAnalysisModel) -> some View {
-        Button {
-            #if DEBUG
-            print("[CardTap] Tapped \(analysis.analysisType.displayName) id=\(analysis.id.uuidString.prefix(8))")
-            #endif
-            // Show this analysis's full response in the current result area
-            viewModel.currentAnalysisType = analysis.analysisType
-            viewModel.analysisResult = analysis.response
-            viewModel.selectedAnalysis = analysis  // Track for conversation view
-            viewModel.isAnalyzing = false
+        ZStack(alignment: .topTrailing) {
+            // Main card content (tappable to open analysis)
+            Button {
+                // Use centralized method - handles state + colorHex update + marker injection
+                viewModel.selectAnalysis(analysis)
 
-            // Trigger scroll to appropriate position for this analysis
-            // Simple analysis: scroll to top. Conversation: scroll to last turn.
-            scrollToAnalysisId = analysis.id
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label(analysis.analysisType.displayName, systemImage: analysis.analysisType.iconName)
+                // Trigger scroll to appropriate position for this analysis
+                scrollToAnalysisId = analysis.id
+            } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label(analysis.analysisType.displayName, systemImage: analysis.analysisType.iconName)
+                            .font(.caption)
+                            .foregroundStyle(Color(hex: analysis.analysisType.colorHex) ?? .secondary)
+
+                        Spacer()
+
+                        Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        // Indicate tappable (leave space for X button)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.trailing, 16)  // Space for X button
+                    }
+
+                    // Show the question asked for custom questions
+                    if analysis.analysisType == .customQuestion {
+                        Text("Q: \(analysis.prompt)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .italic()
+                    }
+
+                    markdownText(analysis.response)
                         .font(.caption)
-                        .foregroundStyle(Color(hex: analysis.analysisType.colorHex) ?? .secondary)
+                        .foregroundStyle(settings.theme.textColor)
+                        .lineLimit(4)
+                        .multilineTextAlignment(.leading)
 
-                    Spacer()
+                    // Conversation Thread
+                    if let thread = analysis.thread, !thread.turns.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Q: \(turn.question)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
 
-                    Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    // Indicate tappable
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                // Show the question asked for custom questions
-                if analysis.analysisType == .customQuestion {
-                    Text("Q: \(analysis.prompt)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .italic()
-                }
-
-                markdownText(analysis.response)
-                    .font(.caption)
-                    .foregroundStyle(settings.theme.textColor)
-                    .lineLimit(4)
-                    .multilineTextAlignment(.leading)
-
-                // Conversation Thread
-                if let thread = analysis.thread, !thread.turns.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Q: \(turn.question)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-
-                                (Text("A: ") + markdownText(turn.answer))
-                                    .font(.caption2)
-                                    .foregroundStyle(settings.theme.textColor)
+                                    (Text("A: ") + markdownText(turn.answer))
+                                        .font(.caption2)
+                                        .foregroundStyle(settings.theme.textColor)
+                                }
+                                .padding(.leading, 8)
                             }
-                            .padding(.leading, 8)
                         }
                     }
                 }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(settings.theme.backgroundColor)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(settings.theme.textColor.opacity(0.1), lineWidth: 1)
+                )
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(settings.theme.textColor.opacity(0.1), lineWidth: 1)
-            )
+            .buttonStyle(.plain)
+
+            // Delete button (X in top-right corner)
+            Button {
+                viewModel.deleteAnalysis(analysis)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+                    .background(
+                        Circle()
+                            .fill(settings.theme.secondaryBackgroundColor)
+                    )
+            }
+            .buttonStyle(.plain)
+            .offset(x: -6, y: 6)
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Pending Selection Section

@@ -450,6 +450,152 @@ final class ReaderViewModel {
         notificationFeedback.notificationOccurred(.success)
     }
 
+    // MARK: - Analysis Management
+
+    /// Delete a specific analysis from a highlight
+    /// Unlike deleteHighlight(), this only removes one analysis thread, not the entire highlight
+    func deleteAnalysis(_ analysis: AIAnalysisModel) {
+        guard let highlight = analysis.highlight else { return }
+
+        // Haptic feedback
+        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+        impactFeedback.impactOccurred()
+
+        // Track if we need to auto-select another analysis after deletion
+        let wasSelected = selectedAnalysis?.id == analysis.id
+
+        // If this analysis is currently selected, clear selection state first
+        // Full state set per State Symmetry principle (documented in project_memory)
+        if wasSelected {
+            selectedAnalysis = nil
+            currentAnalysisType = nil
+            analysisResult = nil
+            isAnalyzing = false
+            customQuestion = ""  // Clear any pending follow-up text
+        }
+
+        // Remove from highlight's analyses array
+        highlight.analyses.removeAll { $0.id == analysis.id }
+
+        // Delete from database (cascade will delete thread and turns)
+        modelContext.delete(analysis)
+        try? modelContext.save()
+
+        // Determine new color based on the guideline: Color = Currently Selected Analysis
+        // Only recalculate color when selection changes (wasSelected=true means we need new selection)
+        // If deleting non-selected analysis, keep current color (it still matches selectedAnalysis)
+        let newColorHex: String
+        if wasSelected {
+            // Deleted the selected analysis - need to auto-select next and update color
+            if let mostRecentAnalysis = highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt }).first {
+                // Auto-select the most recent remaining analysis
+                // Provides smooth UX - no jarring "empty" state after deletion
+                selectedAnalysis = mostRecentAnalysis
+                currentAnalysisType = mostRecentAnalysis.analysisType
+                analysisResult = mostRecentAnalysis.response
+                newColorHex = mostRecentAnalysis.analysisType.colorHex
+                #if DEBUG
+                print("[DeleteAnalysis] Auto-selected next analysis: \(mostRecentAnalysis.analysisType.displayName)")
+                #endif
+            } else {
+                // No analyses remain - color reverts to default yellow
+                newColorHex = "#FFEB3B"
+            }
+        } else {
+            // Deleted a non-selected analysis - keep current color (still matches selectedAnalysis)
+            newColorHex = highlight.colorHex
+            #if DEBUG
+            print("[DeleteAnalysis] Keeping current color: \(newColorHex) (deleted non-selected analysis)")
+            #endif
+        }
+
+        // Trigger WKWebView marker update (color and count) via JS injection
+        // This updates the inline marker [1][2] count and background color without reload
+        let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: newColorHex)
+
+        // Match saveAnalysis() pattern: defer colorHex update if user has active text selection
+        // This prevents hash change → HTML reload which would disrupt selection
+        if hasActiveTextSelection {
+            // Queue the update - applyDeferredMarkerUpdates() will handle colorHex later
+            pendingMarkerUpdatesQueue.append(markerUpdate)
+            #if DEBUG
+            print("[DeleteAnalysis] DEFERRED marker update - hasActiveTextSelection=true")
+            #endif
+        } else {
+            // Safe to update colorHex now - no active selection to disrupt
+            let oldColorHex = highlight.colorHex
+            highlight.colorHex = newColorHex
+            do {
+                try modelContext.save()
+                #if DEBUG
+                print("[DeleteAnalysis] IMMEDIATE colorHex update: \(oldColorHex) → \(newColorHex)")
+                #endif
+            } catch {
+                #if DEBUG
+                print("[DeleteAnalysis] ERROR saving colorHex: \(error)")
+                #endif
+            }
+            pendingMarkerUpdate = markerUpdate
+        }
+
+        #if DEBUG
+        print("[Analysis] Deleted analysis id=\(analysis.id.uuidString.prefix(8)) type=\(analysis.analysisType.displayName), remaining: \(highlight.analyses.count)")
+        #endif
+    }
+
+    /// Select an existing analysis to view (from Previous Analyses cards)
+    /// Updates highlight color to match the selected analysis type - color represents user's current focus
+    func selectAnalysis(_ analysis: AIAnalysisModel) {
+        guard let highlight = analysis.highlight else { return }
+
+        #if DEBUG
+        let prevType = selectedAnalysis?.analysisType.displayName ?? "nil"
+        print("[SelectAnalysis] Switching: \(prevType) → \(analysis.analysisType.displayName) id=\(analysis.id.uuidString.prefix(8))")
+        #endif
+
+        // Set UI state - all variables together per State Symmetry
+        currentAnalysisType = analysis.analysisType
+        analysisResult = analysis.response
+        selectedAnalysis = analysis
+        isAnalyzing = false
+
+        // Update highlight color to match selected analysis type
+        // Color represents "what user is currently viewing" not "what was created most recently"
+        let newColorHex = analysis.analysisType.colorHex
+
+        // Only update if color actually changed
+        guard highlight.colorHex != newColorHex else {
+            #if DEBUG
+            print("[SelectAnalysis] Color unchanged: \(newColorHex)")
+            #endif
+            return
+        }
+
+        // Trigger WKWebView marker update (same pattern as saveAnalysis/deleteAnalysis)
+        let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: newColorHex)
+
+        if hasActiveTextSelection {
+            pendingMarkerUpdatesQueue.append(markerUpdate)
+            #if DEBUG
+            print("[SelectAnalysis] DEFERRED color update - hasActiveTextSelection=true")
+            #endif
+        } else {
+            let oldColorHex = highlight.colorHex
+            highlight.colorHex = newColorHex
+            do {
+                try modelContext.save()
+                #if DEBUG
+                print("[SelectAnalysis] Color updated: \(oldColorHex) → \(newColorHex)")
+                #endif
+            } catch {
+                #if DEBUG
+                print("[SelectAnalysis] ERROR saving colorHex: \(error)")
+                #endif
+            }
+            pendingMarkerUpdate = markerUpdate
+        }
+    }
+
     // MARK: - AI Analysis
     func performAnalysis(type: AnalysisType, text: String, context: String, question: String? = nil) {
         guard let highlight = selectedHighlight else { return }
@@ -747,8 +893,24 @@ final class ReaderViewModel {
                             // Only save if highlight wasn't deleted while analysis was running
                             // Use book.highlights (not currentChapterHighlights) so analysis saves
                             // even when user switches chapters during background processing
-                            if book.highlights.contains(where: { $0.id == highlightId }) {
+                            if let freshHighlight = book.highlights.first(where: { $0.id == highlightId }) {
                                 if let analysis = analysisToFollowUp {
+                                    // Verify analysis wasn't deleted while streaming
+                                    // The captured analysisToFollowUp might have been deleted via X button
+                                    guard freshHighlight.analyses.contains(where: { $0.id == analysis.id }) else {
+                                        #if DEBUG
+                                        print("[FollowUp] ABORTED: Analysis \(analysis.id.uuidString.prefix(8)) was deleted during streaming")
+                                        #endif
+                                        // Clean up: reset UI state if this was the active job
+                                        if highlightToJobMap[highlightId] == jobId {
+                                            highlightToJobMap.removeValue(forKey: highlightId)
+                                            if selectedHighlight?.id == highlightId {
+                                                isAnalyzing = false
+                                                analysisResult = nil
+                                            }
+                                        }
+                                        return
+                                    }
                                     // Add turn to the analysis thread
                                     // Note: addTurnToThread has built-in duplicate detection to prevent
                                     // double-tap from creating duplicate turns
@@ -926,13 +1088,23 @@ final class ReaderViewModel {
             selectedAnalysis = nil
             currentAnalysisType = nil
         } else {
-            // No active job - load the most recent completed analysis
+            // No active job - load the analysis matching the highlight's current color
+            // Color represents "what user last viewed" - persist their selection across taps
+            // Fallback to most recent if no match (e.g., fresh highlight or color mismatch)
             let sortedAnalyses = freshHighlight.analyses.sorted(by: { $0.createdAt > $1.createdAt })
-            if let mostRecent = sortedAnalyses.first {
-                currentAnalysisType = mostRecent.analysisType
-                analysisResult = mostRecent.response
-                selectedAnalysis = mostRecent
+
+            // Find analysis matching current highlight color (user's last selection)
+            let analysisMatchingColor = sortedAnalyses.first { $0.analysisType.colorHex == freshHighlight.colorHex }
+
+            if let analysisToShow = analysisMatchingColor ?? sortedAnalyses.first {
+                currentAnalysisType = analysisToShow.analysisType
+                analysisResult = analysisToShow.response
+                selectedAnalysis = analysisToShow
                 isAnalyzing = false
+                #if DEBUG
+                let source = analysisMatchingColor != nil ? "color-matched" : "fallback-to-recent"
+                print("[SelectHighlight] Showing \(analysisToShow.analysisType.displayName) (\(source))")
+                #endif
             } else {
                 // No analyses yet - clear result
                 currentAnalysisType = nil

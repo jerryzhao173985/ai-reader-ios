@@ -2,32 +2,37 @@
   "memories": [
     {
       "type": "preference",
-      "content": "Build/test on physical iPhone 15 Pro Max via WiFi (Device ID: 00008130-001659882E43001C). User prefers fundamentally correct, complete code that addresses root causes - not minimal changes or overkill complexity. Defensive correctness valued over brevity when it aids maintainer understanding.",
+      "content": "Build/test on physical iPhone 15 Pro Max via WiFi (Device ID: 00008130-001659882E43001C). User prefers fundamentally correct, complete code that addresses root causes - not minimal changes or overkill complexity. Defensive correctness valued over brevity when it aids maintainer understanding. User values first-principles thinking over blindly following initial mental models.",
       "added_at": "2026-01-22T10:00:00.000000"
     },
     {
       "type": "completed_feature",
-      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library, TOC, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions), inline markers [1][2][3], delete highlight + undo (flicker-free via JS injection), haptic feedback, brain icon chapter highlights list, cross-chapter analysis persistence. Thread-per-analysis architecture: each analysis type has its own independent conversation thread with follow-ups. UX: Panel scrolls to previously viewed highlight when closing analysis view (instant positioning via Transaction.disablesAnimations). Inline side notes: analysis runs in background, panel opens only on marker tap. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
-      "added_at": "2026-01-24T00:35:00.000000"
+      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library, TOC, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions), inline markers [1][2][3], delete highlight + undo, delete individual analysis (X button), haptic feedback, brain icon chapter highlights list, cross-chapter analysis persistence. Thread-per-analysis architecture. **Color = Currently Selected Analysis**: highlight color syncs with the analysis user is actively viewing (not most recent by date). GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
+      "added_at": "2026-01-25T00:10:00.000000"
     },
     {
       "type": "technical",
-      "content": "Architecture: book.highlights = ALL highlights (book-scoped), currentChapterHighlights = filtered for current chapter. AIAnalysisModel.prompt/response = initial Q&A; AIAnalysisModel.thread.turns = follow-ups only. WKWebView: JS injection for marker/color/undo updates (not loadHTMLString). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection + pendingMarkerUpdatesQueue. AnalysisPanelView: ScrollViewReader + scrollToHighlightOnReturn for instant scroll positioning on close.",
-      "added_at": "2026-01-24T00:35:00.000000"
+      "content": "Architecture: book.highlights = ALL highlights (book-scoped), currentChapterHighlights = filtered for current chapter. AIAnalysisModel.prompt/response = initial Q&A; AIAnalysisModel.thread.turns = follow-ups only. WKWebView: JS injection for marker/color/undo updates (not loadHTMLString). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection + pendingMarkerUpdatesQueue. AnalysisPanelView scroll system: Three mutually exclusive onChange handlers using .id() modifiers. ChapterContentView deduplication: lastHandledMarkerUpdate tracks (highlightId, colorHex) to allow color changes on same highlight.",
+      "added_at": "2026-01-25T00:10:00.000000"
     },
     {
       "type": "decision",
-      "content": "State Management Patterns: (1) Atomic State Transitions: When multiple state variables represent a logical state, update them ALL together. (2) performAnalysis() clears selectedAnalysis=nil for clean loading view; askFollowUpQuestion() captures analysisToFollowUp=selectedAnalysis at function START. (3) State Symmetry: All deselection paths must clear full state set (selectedHighlight, selectedAnalysis, currentAnalysisType, isAnalyzing, analysisResult, customQuestion). (4) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight; isActiveJob guards UI updates ONLY. (5) Principle: User intent trumps background job completion.",
-      "added_at": "2026-01-23T18:00:00.000000"
+      "content": "State Management Patterns: (1) Atomic State Transitions: When multiple state variables represent a logical state, update them ALL together (selectedAnalysis, currentAnalysisType, analysisResult, isAnalyzing, customQuestion). (2) State Symmetry: All deselection/deletion paths must clear full state set. (3) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight; guard checks verify analysis still exists before saving. (4) Operation Symmetry: saveAnalysis(), selectAnalysis(), and deleteAnalysis() all update colorHex and trigger pendingMarkerUpdate following identical deferral pattern.",
+      "added_at": "2026-01-25T00:10:00.000000"
+    },
+    {
+      "type": "decision",
+      "content": "UX First Principles: Swipe gestures work for flat top-level lists but NOT for nested content like analysis cards. Direct X button in card corner is cleaner - immediately discoverable vs hidden gesture. Pin-to-top feature removed as overengineering. Filter selectedAnalysis from Previous Analyses list to avoid duplicate display. selectHighlight() finds analysis matching colorHex first (user's last selection), falls back to most recent - this preserves implicit 'pinning' across taps.",
+      "added_at": "2026-01-25T00:10:00.000000"
     },
     {
       "type": "bugfix",
-      "content": "selectHighlight() stale state bug (2026-01-23): Active job branch only updated isAnalyzing/analysisResult but left selectedAnalysis/currentAnalysisType stale. Fix: Added selectedAnalysis=nil, currentAnalysisType=nil in active job branch. Root cause: Violated atomic state transition principle. Full investigation: docs/bug-investigation-selectHighlight-stale-state.md",
-      "added_at": "2026-01-23T18:00:00.000000"
+      "content": "Delete analysis race conditions (2026-01-24): askFollowUpQuestion guard verifies analysis still exists before addTurnToThread. Color sync bug (2026-01-25): ChapterContentView deduplication was only checking highlightId, blocking color changes on same highlight. Fix: track (highlightId, colorHex) tuple so color changes trigger WKWebView JS injection.",
+      "added_at": "2026-01-25T00:10:00.000000"
     }
   ],
   "manual_memories": [],
   "realtime_memories": [],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-24T00:35:00.000000"
+  "updated_at": "2026-01-25T00:15:00.000000"
 }

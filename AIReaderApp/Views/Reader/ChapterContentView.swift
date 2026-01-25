@@ -409,9 +409,15 @@ struct ChapterWebView: UIViewRepresentable {
         // Handle pending marker update via JS injection (no reload, no flicker)
         // This is triggered when analysis completes - update marker text AND highlight color
         // IMPORTANT: Only skip reload if no new highlights were added (checked via isHighlightUpdate)
-        if let update = pendingMarkerUpdate,
-           update.highlightId != context.coordinator.lastHandledMarkerId {
-            context.coordinator.lastHandledMarkerId = update.highlightId
+        // Check if this is a NEW update (different highlight OR different color)
+        let isNewMarkerUpdate: Bool = {
+            guard let update = pendingMarkerUpdate else { return false }
+            guard let last = context.coordinator.lastHandledMarkerUpdate else { return true }
+            return update.highlightId != last.highlightId || update.colorHex != last.colorHex
+        }()
+
+        if let update = pendingMarkerUpdate, isNewMarkerUpdate {
+            context.coordinator.lastHandledMarkerUpdate = (update.highlightId, update.colorHex)
             context.coordinator.injectMarkerUpdate(
                 webView: webView,
                 highlightId: update.highlightId,
@@ -442,7 +448,7 @@ struct ChapterWebView: UIViewRepresentable {
             context.coordinator.lastStyledContentHash = styledContentHash
             context.coordinator.lastHighlightIds = currentHighlightIds
             context.coordinator.resetScrollRestoration()
-            context.coordinator.lastHandledMarkerId = nil  // Reset for new chapter
+            context.coordinator.lastHandledMarkerUpdate = nil  // Reset for new chapter
 
             // Clear any pending undo restore - the new chapter HTML already includes the highlight
             if pendingUndoRestore != nil {
@@ -983,8 +989,9 @@ struct ChapterWebView: UIViewRepresentable {
         /// Scroll position to restore after HTML reload (preserves position during highlight updates)
         /// NOT cleared after restoration - kept for subsequent rapid loads until user manually scrolls
         private var pendingScrollPosition: CGFloat?
-        /// Last handled marker update ID to prevent duplicate handling
-        var lastHandledMarkerId: UUID?
+        /// Last handled marker update to prevent duplicate handling
+        /// Tracks both highlightId AND colorHex so color changes on same highlight are processed
+        var lastHandledMarkerUpdate: (highlightId: UUID, colorHex: String)?
         /// Track highlight IDs to detect structural changes (add/remove) vs visual changes (color/count)
         var lastHighlightIds: Set<UUID> = []
 
