@@ -422,7 +422,7 @@ struct ChapterWebView: UIViewRepresentable {
         }()
 
         if let update = pendingMarkerUpdate, isNewMarkerUpdate {
-            context.coordinator.lastHandledMarkerUpdate = (update.highlightId, update.colorHex, update.analysisCount)
+            context.coordinator.lastHandledMarkerUpdate = (update.highlightId, update.analysisCount, update.colorHex)
             context.coordinator.injectMarkerUpdate(
                 webView: webView,
                 highlightId: update.highlightId,
@@ -459,6 +459,13 @@ struct ChapterWebView: UIViewRepresentable {
             if pendingUndoRestore != nil {
                 DispatchQueue.main.async {
                     self.onUndoRestoreHandled()
+                }
+            }
+
+            // Clear any pending marker update from old chapter - prevents stale JS injection
+            if pendingMarkerUpdate != nil {
+                DispatchQueue.main.async {
+                    self.onMarkerUpdateHandled()
                 }
             }
 
@@ -995,12 +1002,12 @@ struct ChapterWebView: UIViewRepresentable {
         /// NOT cleared after restoration - kept for subsequent rapid loads until user manually scrolls
         private var pendingScrollPosition: CGFloat?
         /// Last handled marker update to prevent duplicate handling
-        /// DESIGN: Tracks ALL 3 fields from pendingMarkerUpdate tuple:
+        /// DESIGN: Tracks ALL 3 fields from pendingMarkerUpdate tuple (SAME ORDER):
         /// - highlightId: which highlight changed
-        /// - colorHex: marker and highlight background color (visual change)
         /// - analysisCount: number of analyses (for state hygiene - ensures pendingMarkerUpdate is cleared)
+        /// - colorHex: marker and highlight background color (visual change)
         /// Note: Marker displays highlight ORDER [N], not analysisCount - count tracked for state correctness
-        var lastHandledMarkerUpdate: (highlightId: UUID, colorHex: String, analysisCount: Int)?
+        var lastHandledMarkerUpdate: (highlightId: UUID, analysisCount: Int, colorHex: String)?
         /// Track highlight IDs to detect structural changes (add/remove) vs visual changes (color/count)
         var lastHighlightIds: Set<UUID> = []
 
