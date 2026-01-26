@@ -192,16 +192,8 @@ struct AnalysisPanelView: View {
                 }
             }
 
-            // Selected text box (delete via ellipsis menu above)
-            Text(highlight.selectedText)
-                .font(.subheadline)
-                .foregroundStyle(settings.theme.textColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(hex: highlight.colorHex ?? "#ffff00")?.opacity(0.2) ?? Color.yellow.opacity(0.2))
-                )
+            // Selected text box - styled with colored bar + border to match HighlightsView pattern
+            quoteBlock(highlight: highlight)
 
             // Quick Analysis Buttons + Delete
             ScrollView(.horizontal, showsIndicators: false) {
@@ -228,6 +220,31 @@ struct AnalysisPanelView: View {
                 }
             }
         }
+    }
+
+    /// Quote block styled with colored bar + border - aligned with HighlightsView pattern
+    private func quoteBlock(highlight: HighlightModel) -> some View {
+        let quoteColor = Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow
+        return HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(quoteColor)
+                .frame(width: 4)
+
+            Text(highlight.selectedText)
+                .font(.subheadline)
+                .foregroundStyle(settings.theme.textColor)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(quoteColor.opacity(0.15))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(quoteColor.opacity(0.3), lineWidth: 1)
+        )
     }
 
     private func analysisTypeButton(_ type: AnalysisType, highlight: HighlightModel) -> some View {
@@ -622,11 +639,11 @@ struct AnalysisPanelView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(settings.theme.backgroundColor)
+                        .fill((Color(hex: analysis.analysisType.colorHex) ?? .blue).opacity(0.15))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(settings.theme.textColor.opacity(0.1), lineWidth: 1)
+                        .stroke((Color(hex: analysis.analysisType.colorHex) ?? .blue).opacity(0.3), lineWidth: 1)
                 )
             }
             .buttonStyle(.plain)
@@ -764,7 +781,7 @@ struct AnalysisPanelView: View {
                                 .padding(.vertical, 1)
                                 .background(
                                     Capsule()
-                                        .fill(Color(hex: highlight.colorHex ?? "#888888") ?? .gray)
+                                        .fill(Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow)
                                 )
                         }
                     } else {
@@ -784,11 +801,11 @@ struct AnalysisPanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(hex: highlight.colorHex ?? "#ffff00")?.opacity(0.15) ?? Color.yellow.opacity(0.15))
+                    .fill(Color(hex: highlight.colorHex ?? "#FFEB3B")?.opacity(0.15) ?? Color.yellow.opacity(0.15))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(hex: highlight.colorHex ?? "#ffff00")?.opacity(0.3) ?? Color.yellow.opacity(0.3), lineWidth: 1)
+                    .stroke(Color(hex: highlight.colorHex ?? "#FFEB3B")?.opacity(0.3) ?? Color.yellow.opacity(0.3), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

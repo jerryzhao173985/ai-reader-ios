@@ -19,6 +19,8 @@ struct HighlightsView: View {
     @State private var showingExportOptions = false
     @State private var exportDocument: HighlightsExportDocument?
     @State private var showingExportSheet = false
+    /// Highlight selected for detail view (shows analyses in sheet)
+    @State private var selectedHighlightForDetail: HighlightModel?
 
     private var filteredHighlights: [HighlightModel] {
         var highlights = book.highlights.sorted(by: { $0.createdAt > $1.createdAt })
@@ -131,6 +133,11 @@ struct HighlightsView: View {
         List {
             ForEach(filteredHighlights) { highlight in
                 HighlightRow(highlight: highlight, settings: settings)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        // Show analyses for this highlight in a detail sheet
+                        selectedHighlightForDetail = highlight
+                    }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
                             deleteHighlight(highlight)
@@ -138,9 +145,19 @@ struct HighlightsView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
+                    // CRITICAL: Hide white separators and use theme-colored background
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(settings.theme.backgroundColor)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)  // Hide default List white background
+        .background(settings.theme.backgroundColor)
+        .sheet(item: $selectedHighlightForDetail) { highlight in
+            HighlightDetailSheet(highlight: highlight, book: book)
+                .environment(settings)
+        }
     }
 
     // MARK: - Empty State
@@ -304,20 +321,26 @@ struct FilterChip: View {
 }
 
 // MARK: - Highlight Row
+/// Styled to match Reader's chapterHighlightRow in AnalysisPanelView
 struct HighlightRow: View {
     let highlight: HighlightModel
     let settings: SettingsManager
 
+    private var highlightColor: Color {
+        Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             // Text
             Text(highlight.selectedText)
                 .font(.subheadline)
                 .foregroundStyle(settings.theme.textColor)
                 .lineLimit(3)
+                .multilineTextAlignment(.leading)
 
             // Metadata
-            HStack {
+            HStack(spacing: 8) {
                 // Analysis Types + Count
                 if !highlight.analyses.isEmpty {
                     HStack(spacing: 6) {
@@ -338,9 +361,13 @@ struct HighlightRow: View {
                             .padding(.vertical, 1)
                             .background(
                                 Capsule()
-                                    .fill(Color(hex: highlight.colorHex ?? "#888888") ?? .gray)
+                                    .fill(highlightColor)
                             )
                     }
+                } else {
+                    Text("No analysis yet")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -351,12 +378,390 @@ struct HighlightRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(hex: highlight.colorHex ?? "#ffff00")?.opacity(0.1) ?? Color.yellow.opacity(0.1))
+                .fill(highlightColor.opacity(0.15))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(highlightColor.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Highlight Detail Sheet
+/// Shows all analyses for a single highlight in a sheet
+/// Mirrors AnalysisPanelView behavior but without reader context
+struct HighlightDetailSheet: View {
+    let highlight: HighlightModel
+    let book: BookModel
+
+    @Environment(SettingsManager.self) private var settings
+    @Environment(\.dismiss) private var dismiss
+
+    /// Currently expanded analysis (nil = show list)
+    @State private var expandedAnalysis: AIAnalysisModel?
+
+    private var chapterTitle: String {
+        book.chapters.first(where: { $0.order == highlight.chapterIndex })?.title
+            ?? "Chapter \(highlight.chapterIndex + 1)"
+    }
+
+    // MARK: - Markdown Text Helper
+    /// Renders markdown text with fallback to plain text if parsing fails
+    /// Aligned with AnalysisPanelView's markdownText() helper
+    private func markdownText(_ string: String) -> Text {
+        if let attributed = try? AttributedString(markdown: string, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            return Text(attributed)
+        } else {
+            return Text(string)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        // Scroll anchor at the top - enables programmatic scrolling
+                        Color.clear
+                            .frame(height: 0)
+                            .id("detail-top")
+
+                        // Highlighted text
+                        highlightTextSection
+
+                        Divider()
+
+                        // Analyses
+                        if highlight.analyses.isEmpty {
+                            noAnalysesView
+                        } else if let analysis = expandedAnalysis {
+                            // Show expanded analysis
+                            expandedAnalysisView(analysis)
+                        } else {
+                            // Show analysis cards list
+                            analysisCardsSection
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: expandedAnalysis) { _, _ in
+                    // When expanding or collapsing an analysis, scroll to top instantly
+                    // No animation prevents jarring visual jump
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo("detail-top", anchor: .top)
+                    }
+                }
+                .onAppear {
+                    // Reset scroll position when sheet first appears
+                    // This prevents iOS from preserving scroll position from previous sheet presentations
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo("detail-top", anchor: .top)
+                    }
+                }
+            }
+            .background(settings.theme.backgroundColor)
+            .navigationTitle("Highlight")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+
+                if expandedAnalysis != nil {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                expandedAnalysis = nil
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                Text("Back")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    // MARK: - Highlight Text Section
+    /// Color for the quote block - uses expanded analysis type color when viewing an analysis,
+    /// otherwise uses the highlight's original color
+    private var currentDisplayColor: Color {
+        if let analysis = expandedAnalysis {
+            return Color(hex: analysis.analysisType.colorHex) ?? .blue
+        }
+        return Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow
+    }
+
+    private var highlightTextSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Chapter info
+            HStack {
+                Text(chapterTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                // Show current analysis type indicator when expanded
+                if let analysis = expandedAnalysis {
+                    HStack(spacing: 4) {
+                        Image(systemName: analysis.analysisType.iconName)
+                            .font(.caption2)
+                        Text(analysis.analysisType.displayName)
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundStyle(currentDisplayColor)
+                }
+            }
+
+            // Highlighted text with dynamic color that syncs with current analysis
+            // Uses colored tint + border to match Reader's styling pattern
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(currentDisplayColor)
+                    .frame(width: 4)
+
+                Text(highlight.selectedText)
+                    .font(.body)
+                    .foregroundStyle(settings.theme.textColor)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(currentDisplayColor.opacity(0.15))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(currentDisplayColor.opacity(0.3), lineWidth: 1)
+            )
+            .animation(.easeInOut(duration: 0.2), value: expandedAnalysis?.id)
+
+            // Date
+            Text(highlight.createdAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Analysis Cards Section
+    private var analysisCardsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Analyses (\(highlight.analyses.count))")
+                .font(.headline)
+                .foregroundStyle(settings.theme.textColor)
+
+            ForEach(highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt })) { analysis in
+                AnalysisCard(analysis: analysis, settings: settings) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        expandedAnalysis = analysis
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Expanded Analysis View
+    /// Shows analysis content directly - type info is already shown in quote header
+    private func expandedAnalysisView(_ analysis: AIAnalysisModel) -> some View {
+        let typeColor = Color(hex: analysis.analysisType.colorHex) ?? .blue
+
+        return VStack(alignment: .leading, spacing: 16) {
+            // Analysis response - primary content (type already shown in quote header)
+            VStack(alignment: .leading, spacing: 10) {
+                markdownText(analysis.response)
+                    .font(.body)
+                    .foregroundStyle(settings.theme.textColor)
+                    .textSelection(.enabled)
+
+                // Analysis creation date (subtle)
+                Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(settings.theme.secondaryBackgroundColor)
+            )
+
+            // Thread turns (follow-up Q&A) - chat bubble style
+            if let thread = analysis.thread, !thread.turns.isEmpty {
+                // Section header
+                HStack {
+                    VStack { Divider() }
+                    Text("Follow-up Q&A")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    VStack { Divider() }
+                }
+                .padding(.vertical, 4)
+
+                ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
+                    VStack(alignment: .leading, spacing: 10) {
+                        // User question - right-aligned with "You" label
+                        HStack(alignment: .top) {
+                            Spacer(minLength: 50)
+                            VStack(alignment: .trailing, spacing: 4) {
+                                HStack(spacing: 4) {
+                                    Text("You")
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(.white.opacity(0.8))
+                                    Image(systemName: "person.circle.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(.white.opacity(0.8))
+                                }
+                                Text(turn.question)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.white)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18)
+                                    .fill(settings.theme.accentColor)
+                            )
+                        }
+
+                        // AI answer - left-aligned with "AI" label
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "sparkles")
+                                        .font(.caption2)
+                                        .foregroundStyle(typeColor)
+                                    Text("AI")
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(typeColor)
+                                }
+                                markdownText(turn.answer)
+                                    .font(.subheadline)
+                                    .foregroundStyle(settings.theme.textColor)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18)
+                                    .fill(settings.theme.secondaryBackgroundColor)
+                            )
+                            Spacer(minLength: 50)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    // MARK: - No Analyses View
+    private var noAnalysesView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.largeTitle)
+                .foregroundStyle(.tertiary)
+
+            Text("No Analyses Yet")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+
+            Text("Open this highlight in the reader to add analyses.")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+}
+
+// MARK: - Analysis Card (for list view)
+/// Styled with colored tint + border to match Reader's highlight cards
+struct AnalysisCard: View {
+    let analysis: AIAnalysisModel
+    let settings: SettingsManager
+    let onTap: () -> Void
+
+    private var typeColor: Color {
+        Color(hex: analysis.analysisType.colorHex) ?? .blue
+    }
+
+    /// Renders markdown text with fallback - aligned with HighlightDetailSheet
+    private func analysisPreviewText(_ string: String) -> Text {
+        if let attributed = try? AttributedString(markdown: string, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            return Text(attributed)
+        } else {
+            return Text(string)
+        }
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Header
+                HStack {
+                    Image(systemName: analysis.analysisType.iconName)
+                        .font(.subheadline)
+                        .foregroundStyle(typeColor)
+
+                    Text(analysis.analysisType.displayName)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(settings.theme.textColor)
+
+                    Spacer()
+
+                    // Thread count badge if has follow-ups
+                    if let thread = analysis.thread, !thread.turns.isEmpty {
+                        Text("\(thread.turns.count)")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(typeColor)
+                            )
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                // Preview of response (with markdown support)
+                analysisPreviewText(analysis.response)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(typeColor.opacity(0.15))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(typeColor.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -21,11 +21,16 @@ final class ReadingProgressModel {
     var lastUpdated: Date
 
     // MARK: - Computed Properties
+    /// Returns progress as percentage (0-100), clamped to valid range
     var progressPercentage: Double {
         guard let book = book, book.chapterCount > 0 else { return 0 }
         let chapterProgress = Double(chapterIndex) / Double(book.chapterCount)
-        let withinChapterProgress = scrollPosition / Double(book.chapterCount)
-        return (chapterProgress + withinChapterProgress) * 100
+        // Clamp scrollPosition to 0-1 to handle WebView edge cases
+        let clampedScrollPosition = max(0, min(1, scrollPosition))
+        let withinChapterProgress = clampedScrollPosition / Double(book.chapterCount)
+        let rawPercentage = (chapterProgress + withinChapterProgress) * 100
+        // Clamp to valid percentage range
+        return max(0, min(100, rawPercentage))
     }
 
     init(

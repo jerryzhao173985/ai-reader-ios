@@ -1,7 +1,7 @@
 // LibraryView.swift
 // Grid view displaying all books in the library
 //
-// Features: book grid, import, delete, progress display
+// Features: book grid, import, delete, progress display, highlights access
 
 import SwiftUI
 import SwiftData
@@ -15,6 +15,8 @@ struct LibraryView: View {
 
     @State private var showingFilePicker = false
     @State private var searchText = ""
+    /// Book selected for highlights sheet - using sheet(item:) pattern for reliable presentation
+    @State private var selectedBookForHighlights: BookModel?
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 20)
@@ -69,6 +71,12 @@ struct LibraryView: View {
         } message: {
             Text(viewModel.errorMessage ?? "An unknown error occurred")
         }
+        // Using sheet(item:) pattern - more reliable than isPresented + if let
+        // Automatically handles nil case and presents only when item is set
+        .sheet(item: $selectedBookForHighlights) { book in
+            HighlightsView(book: book)
+                .environment(settings)
+        }
     }
 
     // MARK: - Subviews
@@ -113,6 +121,19 @@ struct LibraryView: View {
                         onBookSelected(book)
                     }
                     .contextMenu {
+                        // Highlights access - opens HighlightsView for this book
+                        Button {
+                            selectedBookForHighlights = book
+                        } label: {
+                            let count = book.highlights.count
+                            Label(
+                                count > 0 ? "Highlights (\(count))" : "Highlights",
+                                systemImage: "highlighter"
+                            )
+                        }
+
+                        Divider()
+
                         Button(role: .destructive) {
                             viewModel.deleteBook(book)
                         } label: {
@@ -248,7 +269,7 @@ struct BookCardView: View {
 
 #Preview {
     NavigationStack {
-        LibraryView { _ in }
+        LibraryView(onBookSelected: { _ in })
     }
     .modelContainer(for: BookModel.self)
 }

@@ -559,7 +559,7 @@ struct ChapterWebView: UIViewRepresentable {
         // Generate highlight CSS
         var highlightStyles = ""
         for (index, highlight) in highlights.enumerated() {
-            let color = highlight.colorHex ?? "#ffff00"
+            let color = highlight.colorHex ?? "#FFEB3B"
             highlightStyles += """
             .highlight-\(highlight.id.uuidString.replacingOccurrences(of: "-", with: "")) {
                 background-color: \(color)40;

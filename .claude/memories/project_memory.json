@@ -2,98 +2,37 @@
   "memories": [
     {
       "type": "preference",
-      "content": "Build/test on physical iPhone 15 Pro Max via WiFi (Device ID: 00008130-001659882E43001C). User prefers fundamentally correct, complete code that addresses root causes - not minimal changes or overkill complexity. Defensive correctness valued over brevity when it aids maintainer understanding. User values first-principles thinking over blindly following initial mental models.",
+      "content": "Build/test on physical iPhone 15 Pro Max via WiFi (Device ID: 00008130-001659882E43001C). User prefers fundamentally correct, complete code that addresses root causes - not minimal changes or overkill complexity. Defensive correctness valued over brevity when it aids maintainer understanding. User values first-principles thinking, careful verification before committing, and 'fresh eyes' review of all changes.",
       "added_at": "2026-01-22T10:00:00.000000"
     },
     {
       "type": "completed_feature",
-      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library, TOC, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions), inline markers [1][2][3], delete highlight + undo, delete individual analysis (X button), haptic feedback, brain icon chapter highlights list, cross-chapter analysis persistence. Thread-per-analysis architecture. **Color = Currently Selected Analysis**: highlight color syncs with the analysis user is actively viewing (not most recent by date). GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
-      "added_at": "2026-01-25T00:10:00.000000"
+      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library (book context menu: Highlights/Delete), TOC, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions), inline markers [1][2][3], delete highlight + undo, delete individual analysis (X button), haptic feedback, brain icon chapter highlights list, cross-chapter analysis persistence, analysis count badges. HighlightsView: accessible via Library long-press, exports (Markdown/JSON/Clipboard), in-place analysis expansion via HighlightDetailSheet (no reader navigation - avoids WebView lag). Quote color syncs with expanded analysis type. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
+      "added_at": "2026-01-26T00:30:00.000000"
     },
     {
       "type": "technical",
-      "content": "Architecture: book.highlights = ALL highlights (book-scoped), currentChapterHighlights = filtered for current chapter. AIAnalysisModel.prompt/response = initial Q&A; AIAnalysisModel.thread.turns = follow-ups only. WKWebView: JS injection for marker/color/undo updates (not loadHTMLString). Dual hash tracking (baseContentHash, styledContentHash). Selection preservation via hasActiveTextSelection + pendingMarkerUpdatesQueue. AnalysisPanelView scroll system: Three mutually exclusive onChange handlers using .id() modifiers. ChapterContentView deduplication: lastHandledMarkerUpdate tracks (highlightId, colorHex) to allow color changes on same highlight.",
-      "added_at": "2026-01-25T00:10:00.000000"
+      "content": "Architecture: book.highlights = ALL (book-scoped), currentChapterHighlights = filtered for chapter. AIAnalysisModel.prompt/response = initial Q&A; thread.turns = follow-ups. WKWebView: JS injection for marker/color updates (not loadHTMLString). ChapterContentView state: 3-field tuple (highlightId, colorHex, analysisCount) for dedup. Chapter-change cleanup clears pendingMarkerUpdate and pendingUndoRestore. Parallel analysis is SAFE: saveAnalysis() writes to SwiftData immediately. Two analysis viewing contexts: (1) AnalysisPanelView in reader (active reading), (2) HighlightDetailSheet in HighlightsView (review mode, no WebView).",
+      "added_at": "2026-01-26T00:30:00.000000"
     },
     {
       "type": "decision",
-      "content": "State Management Patterns: (1) Atomic State Transitions: When multiple state variables represent a logical state, update them ALL together (selectedAnalysis, currentAnalysisType, analysisResult, isAnalyzing, customQuestion). (2) State Symmetry: All deselection/deletion paths must clear full state set. (3) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight; guard checks verify analysis still exists before saving. (4) Operation Symmetry: saveAnalysis(), selectAnalysis(), and deleteAnalysis() all update colorHex and trigger pendingMarkerUpdate following identical deferral pattern.",
-      "added_at": "2026-01-25T00:10:00.000000"
+      "content": "State & UX Patterns: (1) Atomic State Transitions: Update all related state variables together. (2) State Symmetry: All deselection/deletion paths clear full state set. (3) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight. (4) Operation Symmetry: saveAnalysis(), selectAnalysis(), deleteAnalysis() all update colorHex and trigger pendingMarkerUpdate. (5) selectHighlight() finds analysis matching colorHex first, falls back to most recent. (6) Direct X button for delete. (7) HighlightsView: In-place expansion preferred over reader navigation (user rejected tap-to-navigate due to 1.6-2.6s WebView lag).",
+      "added_at": "2026-01-26T00:30:00.000000"
     },
     {
-      "type": "decision",
-      "content": "UX First Principles: Swipe gestures work for flat top-level lists but NOT for nested content like analysis cards. Direct X button in card corner is cleaner - immediately discoverable vs hidden gesture. Pin-to-top feature removed as overengineering. Filter selectedAnalysis from Previous Analyses list to avoid duplicate display. selectHighlight() finds analysis matching colorHex first (user's last selection), falls back to most recent - this preserves implicit 'pinning' across taps.",
-      "added_at": "2026-01-25T00:10:00.000000"
+      "type": "convention",
+      "content": "Visual & SwiftUI Patterns: (1) Card styling: color.opacity(0.15) fill + color.opacity(0.3) stroke for HighlightRow, AnalysisCard, quote blocks. (2) Chat bubbles: User right-aligned (accentColor), AI left-aligned (secondaryBackgroundColor) with 'You'/'AI' labels. (3) List theming: .listRowSeparator(.hidden) + .listRowBackground(theme) + .scrollContentBackground(.hidden). (4) Sheet environment: Always pass .environment(settings) to sheets. (5) sheet(item:) pattern for optional data presentation (avoids race condition vs isPresented + if let). (6) ScrollViewReader + Transaction(disablesAnimations: true) for instant scroll reset.",
+      "added_at": "2026-01-26T18:30:00.000000"
     },
     {
-      "type": "bugfix",
-      "content": "Delete analysis race conditions (2026-01-24): askFollowUpQuestion guard verifies analysis still exists before addTurnToThread. Color sync bugs (2026-01-25): (1) ChapterContentView deduplication was only checking highlightId, blocking color changes on same highlight - fix: track (highlightId, colorHex) tuple. (2) deleteAnalysis() unconditionally set color to most recent remaining, even when deleting non-selected analysis - fix: when wasSelected=false, keep current highlight.colorHex unchanged (prevents color/selection mismatch with 3+ analyses).",
-      "added_at": "2026-01-25T01:00:00.000000"
+      "type": "future_enhancement",
+      "content": "Portable export format (.aireader) with full data hierarchy (highlights → analyses → thread → turns) for backup/restore. Import functionality to load exported data. Currently not essential - standard export (Markdown/JSON) available in HighlightsView.",
+      "added_at": "2026-01-25T21:30:00.000000"
     }
   ],
   "manual_memories": [],
-  "realtime_memories": [
-    {
-      "type": "claude_response",
-      "content": "The commit has been amended successfully. Your branch is now 2 commits ahead of `origin/main` with the complete, correct implementation.\n\n**Summary of what's committed:**\n- `selectAnalysis()` - centra",
-      "added_at": "2026-01-25T12:46:03.952957",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "Great, now I want you to carefully read over all of the new code you just wrote and other existing code you just modified with \"fresh eyes,\" looking super carefully for any obvious bugs, errors, probl",
-      "added_at": "2026-01-25T12:46:03.952973",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "---\n\n## Fresh Eyes Review Complete\n\n### Bugs Found and Fixed\n\n| # | Location | Bug | Fix |\n|---|----------|-----|-----|\n| 1 | `deleteAnalysis()` | Color changed to most recent even when deleting non-s",
-      "added_at": "2026-01-25T12:56:55.972569",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "This changed you made is this really true and actual real correct scenario and there is really this issue, and if this is really useful and helpful and the fixes really solve the root case and find th",
-      "added_at": "2026-01-25T12:56:55.972588",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "Now I have the complete picture. Let me trace through the **exact scenario**:\n\n**Scenario: Delete a non-selected analysis**\n\n| Step | Action | Result |\n|------|--------|--------|\n| 1 | User views Fact",
-      "added_at": "2026-01-25T15:20:19.385850",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "**With the NEW code (checking highlightId + colorHex + analysisCount):**\n\nSame scenario:\n1. `lastHandledMarkerUpdate = (H.id, green, 2)`\n2. `pendingMarkerUpdate = (H.id, 1, green)`\n3. `isNewMarkerUpda",
-      "added_at": "2026-01-25T15:53:14.725363",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "As yuou just analyzed in details please align well with your changes in code to see if this is realy ther best accurate and perfect and useful",
-      "added_at": "2026-01-25T15:53:14.725376",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "Let me trace through specific scenarios to verify the code matches the analysis:\n\n---\n\n## Scenario 1: Delete Non-Selected Analysis\n\n**Setup**: Highlight has Fact Check (green) + Discussion (blue). Use",
-      "added_at": "2026-01-25T15:58:31.004740",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "---\n\n## Honest Reassessment\n\nAfter tracing through the code with fresh eyes, here's the truth:\n\n### What the Marker Actually Shows\n\nThe marker displays `[N]` where **N is the highlight's index** (1st,",
-      "added_at": "2026-01-25T16:03:52.058303",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "Now commit your changes as you well investigated with deep concrete knowledge and you have verified the completeness usablity and improvement.",
-      "added_at": "2026-01-25T16:03:52.058320",
-      "source": "realtime_capture"
-    }
-  ],
+  "realtime_memories": [],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-25T16:03:52.058321"
+  "updated_at": "2026-01-26T22:45:00.000000"
 }
