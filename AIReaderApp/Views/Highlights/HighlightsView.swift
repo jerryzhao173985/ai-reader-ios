@@ -587,10 +587,9 @@ struct HighlightDetailSheet: View {
                 }
 
                 // Custom Question button - creates NEW custom question thread
-                // Clears selectedAnalysis so askFollowUpQuestion creates new analysis instead of appending
+                // Prepares UI for fresh question and blocks ongoing jobs from updating display
                 Button {
-                    manager?.selectedAnalysis = nil  // Clear so NEW custom question is created
-                    manager?.currentAnalysisType = .customQuestion  // Set type indicator
+                    manager?.prepareForNewCustomQuestion()
                     isQuestionFocused = true
                 } label: {
                     Label("Ask Question", systemImage: AnalysisType.customQuestion.iconName)
@@ -604,7 +603,8 @@ struct HighlightDetailSheet: View {
                         .foregroundStyle(Color(hex: AnalysisType.customQuestion.colorHex) ?? settings.theme.accentColor)
                 }
                 .buttonStyle(.plain)
-                .disabled(manager?.isAnalyzing == true)
+                // No .disabled - allow starting new custom question even during streaming
+                // This enables parallel job workflow: user can initiate new question anytime
             }
         }
     }
@@ -624,7 +624,7 @@ struct HighlightDetailSheet: View {
                 .foregroundStyle(Color(hex: type.colorHex) ?? settings.theme.accentColor)
         }
         .buttonStyle(.plain)
-        .disabled(manager?.isAnalyzing == true)
+        // No .disabled - allow parallel jobs (e.g., run Key Points while streaming Fact Check)
     }
 
     // MARK: - Analysis Content Section

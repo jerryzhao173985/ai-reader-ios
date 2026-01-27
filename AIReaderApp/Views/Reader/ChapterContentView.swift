@@ -15,11 +15,7 @@ struct ChapterContentView: View {
     @State private var selectionContext: (before: String, after: String) = ("", "")
     @State private var selectionOffsets: (start: Int, end: Int) = (0, 0)
 
-    // Custom question input
-    @State private var showingCustomQuestionInput = false
-    @State private var customQuestionText = ""
-    @State private var pendingSelectedText = ""
-    @State private var pendingContext = ""
+    // (Custom question input removed - now uses unified follow-up input in AnalysisPanelView)
 
     var body: some View {
         ZStack {
@@ -109,18 +105,7 @@ struct ChapterContentView: View {
                 }
             }
         }
-        .alert("Ask a Question", isPresented: $showingCustomQuestionInput) {
-            TextField("What would you like to know?", text: $customQuestionText)
-            Button("Cancel", role: .cancel) {
-                showingCustomQuestionInput = false
-                customQuestionText = ""
-            }
-            Button("Ask") {
-                submitCustomQuestion()
-            }
-        } message: {
-            Text("Enter your question about the selected text")
-        }
+        // (Alert-based input removed - now uses unified follow-up input in AnalysisPanelView)
     }
 
     // MARK: - Chapter Navigation Overlay
@@ -179,9 +164,9 @@ struct ChapterContentView: View {
                     highlightButton(type: .factCheck, icon: "checkmark.seal", label: "Fact Check")
                     highlightButton(type: .keyPoints, icon: "list.bullet", label: "Key Points")
                     highlightButton(type: .discussion, icon: "bubble.left.and.bubble.right", label: "Discussion")
-                    // Ask button opens custom question input
+                    // Ask button - creates highlight and opens panel with Ask Question mode
                     Button {
-                        showCustomQuestionInput()
+                        createHighlightAndOpenPanelForInput(mode: .askQuestion)
                     } label: {
                         VStack(spacing: 4) {
                             Image(systemName: "questionmark.circle")
@@ -197,7 +182,18 @@ struct ChapterContentView: View {
                 HStack(spacing: 20) {
                     highlightButton(type: .argumentMap, icon: "chart.bar.doc.horizontal", label: "Arguments")
                     highlightButton(type: .counterpoints, icon: "arrow.left.arrow.right", label: "Counter")
-                    highlightButton(type: .comment, icon: "text.bubble", label: "Comment")
+                    // Comment button - creates highlight and opens panel with Add Comment mode
+                    Button {
+                        createHighlightAndOpenPanelForInput(mode: .addComment)
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: "text.bubble")
+                                .font(.title2)
+                            Text("Comment")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(Color(hex: AnalysisType.comment.colorHex) ?? settings.theme.accentColor)
+                    }
 
                     // Just highlight without analysis
                     Button {
@@ -242,14 +238,15 @@ struct ChapterContentView: View {
     }
 
     private func createHighlightOnly() {
-        let highlight = viewModel.createHighlight(
+        // Just create the highlight - don't set selectedHighlight or open any panel
+        // User wants highlight-only to simply mark text yellow for future reference
+        _ = viewModel.createHighlight(
             text: viewModel.selectedText,
             contextBefore: selectionContext.before,
             contextAfter: selectionContext.after,
             startOffset: selectionOffsets.start,
             endOffset: selectionOffsets.end
         )
-        viewModel.selectedHighlight = highlight
         viewModel.showingContextMenu = false
         // Clear selection state so deferred marker updates can be processed
         viewModel.clearSelection()
@@ -275,36 +272,28 @@ struct ChapterContentView: View {
         viewModel.clearSelection()
     }
 
-    private func showCustomQuestionInput() {
-        // Store current selection state before dismissing the menu
-        pendingSelectedText = viewModel.selectedText
-        pendingContext = "\(selectionContext.before)\(viewModel.selectedText)\(selectionContext.after)"
-        customQuestionText = ""
-        showingCustomQuestionInput = true
-        viewModel.showingContextMenu = false
-    }
-
-    private func submitCustomQuestion() {
-        guard !customQuestionText.isEmpty else { return }
-
+    /// Creates highlight and opens analysis panel with specific input mode
+    /// Used for "Ask" (askQuestion mode) and "Comment" (addComment mode) buttons
+    private func createHighlightAndOpenPanelForInput(mode: FollowUpInputMode) {
         let highlight = viewModel.createHighlight(
-            text: pendingSelectedText,
+            text: viewModel.selectedText,
             contextBefore: selectionContext.before,
             contextAfter: selectionContext.after,
             startOffset: selectionOffsets.start,
             endOffset: selectionOffsets.end
         )
         viewModel.selectedHighlight = highlight
-        // Panel opens only when user taps inline side note marker [1] [2] etc.
-        viewModel.performAnalysis(
-            type: .customQuestion,
-            text: pendingSelectedText,
-            context: pendingContext,
-            question: customQuestionText
-        )
-
-        showingCustomQuestionInput = false
-        customQuestionText = ""
+        // CRITICAL: Clear analysis state to prevent cross-contamination from previous highlight
+        // Without this, the panel would show analysis from a different highlight
+        viewModel.selectedAnalysis = nil
+        viewModel.currentAnalysisType = nil
+        viewModel.analysisResult = nil
+        viewModel.isAnalyzing = false
+        // Set the input mode before opening panel
+        viewModel.followUpInputMode = mode
+        // Open the analysis panel
+        viewModel.showingAnalysisPanel = true
+        viewModel.showingContextMenu = false
         // Clear selection state so deferred marker updates can be processed
         viewModel.clearSelection()
     }

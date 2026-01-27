@@ -205,10 +205,9 @@ struct AnalysisPanelView: View {
                     }
 
                     // Custom Question button - creates NEW custom question thread
-                    // Clears selectedAnalysis so askFollowUpQuestion creates new analysis instead of appending
+                    // Prepares UI for fresh question and blocks ongoing jobs from updating display
                     Button {
-                        viewModel.selectedAnalysis = nil  // Clear so NEW custom question is created
-                        viewModel.currentAnalysisType = .customQuestion  // Set type indicator
+                        viewModel.prepareForNewCustomQuestion()
                         isQuestionFocused = true
                     } label: {
                         Label("Ask Question", systemImage: AnalysisType.customQuestion.iconName)
@@ -222,7 +221,8 @@ struct AnalysisPanelView: View {
                             .foregroundStyle(Color(hex: AnalysisType.customQuestion.colorHex) ?? settings.theme.accentColor)
                     }
                     .buttonStyle(.plain)
-                    .disabled(viewModel.isAnalyzing)
+                    // NO .disabled - allow starting new custom question even during streaming
+                    // This enables parallel job workflow: user can initiate new question anytime
 
                     // Delete button (same style as analysis buttons)
                     Button {
@@ -323,16 +323,17 @@ struct AnalysisPanelView: View {
     // MARK: - Current Analysis View (loading or result)
     @ViewBuilder
     private var currentAnalysisView: some View {
-        // Any analysis with a thread OR streaming OR custom question shows conversation view
-        // Custom questions ALWAYS need conversation view to display the question
+        // Any analysis with a thread OR streaming OR custom question OR comment shows conversation view
+        // Custom questions and comments ALWAYS need conversation view to display the content
+        // (comments store user's text in .prompt, not .response)
         // This allows follow-ups on Fact Check, Discussion, etc. - not just custom questions
         if let analysis = viewModel.selectedAnalysis {
-            if analysis.analysisType == .customQuestion || analysis.thread != nil || viewModel.isAnalyzing {
-                // Custom question OR has follow-ups OR actively streaming - show conversation view
+            if analysis.analysisType == .customQuestion || analysis.analysisType == .comment || analysis.thread != nil || viewModel.isAnalyzing {
+                // Custom question OR comment OR has follow-ups OR actively streaming - show conversation view
                 analysisConversationView(analysis)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
-                // No thread, not analyzing, not custom question - just show the result
+                // No thread, not analyzing, not custom question, not comment - just show the result
                 resultView(analysis.response)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -460,6 +461,13 @@ struct AnalysisPanelView: View {
                 // Custom questions: show initial Q&A as chat bubbles
                 userMessageBubble(analysis.prompt)
                 aiMessageBubble(analysis.response)
+            } else if analysis.analysisType == .comment {
+                // Comments: show user's comment as a bubble (no AI response initially)
+                commentBubble(analysis.prompt)
+                // If response is not empty (shouldn't happen for new comments), show it
+                if !analysis.response.isEmpty {
+                    aiMessageBubble(analysis.response)
+                }
             } else {
                 // Other types (Fact Check, Discussion, etc.): show the analysis result
                 markdownText(analysis.response)
@@ -592,6 +600,28 @@ struct AnalysisPanelView: View {
                     .fill(settings.theme.secondaryBackgroundColor)
             )
             Spacer(minLength: 40)
+        }
+    }
+
+    /// Comment bubble - right-aligned with comment color (distinct from user questions)
+    /// Shows the user's personal note/comment on the highlighted text
+    private func commentBubble(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: 40)
+            HStack(spacing: 6) {
+                Image(systemName: "text.bubble")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                Text(text)
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(hex: AnalysisType.comment.colorHex) ?? settings.theme.accentColor)
+            )
         }
     }
 
@@ -931,37 +961,97 @@ struct AnalysisPanelView: View {
     }
 
     // MARK: - Follow-up Input Section
+    /// Mode-aware input section that handles follow-up, ask question, and add comment modes
     private var followUpInputSection: some View {
         VStack(spacing: 0) {
             Divider()
 
             HStack(spacing: 12) {
-                TextField("Ask a follow-up question...", text: $followUpQuestion, axis: .vertical)
+                TextField(inputPlaceholder, text: $followUpQuestion, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.subheadline)
                     .focused($isQuestionFocused)
                     .lineLimit(1...4)
+                    .onAppear {
+                        // Auto-focus when opening in ask/comment mode
+                        if viewModel.followUpInputMode != .followUp {
+                            isQuestionFocused = true
+                        }
+                    }
 
                 Button {
-                    if !followUpQuestion.isEmpty, let highlight = viewModel.selectedHighlight {
-                        viewModel.askFollowUpQuestion(highlight: highlight, question: followUpQuestion)
-                        followUpQuestion = ""
-                        isQuestionFocused = false
-                    }
+                    submitInput()
                 } label: {
-                    Image(systemName: "arrow.up.circle.fill")
+                    Image(systemName: submitButtonIcon)
                         .font(.title2)
                         .foregroundStyle(
                             followUpQuestion.isEmpty
                             ? settings.theme.textColor.opacity(0.3)
-                            : settings.theme.accentColor
+                            : inputAccentColor
                         )
                 }
-                .disabled(followUpQuestion.isEmpty || viewModel.isAnalyzing)
+                // Only disable when empty - allow parallel jobs during streaming
+                // .askQuestion: start NEW custom question thread in parallel
+                // .addComment: add comment (no AI call needed)
+                // .followUp: add turn to existing thread (works during streaming)
+                .disabled(followUpQuestion.isEmpty)
             }
             .padding(12)
             .background(settings.theme.backgroundColor)
         }
+    }
+
+    /// Placeholder text based on current input mode
+    private var inputPlaceholder: String {
+        switch viewModel.followUpInputMode {
+        case .followUp:
+            return "Ask a follow-up question..."
+        case .askQuestion:
+            return "What would you like to know about this text?"
+        case .addComment:
+            return "Add your comment..."
+        }
+    }
+
+    /// Submit button icon based on mode
+    private var submitButtonIcon: String {
+        switch viewModel.followUpInputMode {
+        case .addComment:
+            return "arrow.up.circle.fill"
+        default:
+            return "arrow.up.circle.fill"
+        }
+    }
+
+    /// Accent color for the input based on mode
+    private var inputAccentColor: Color {
+        switch viewModel.followUpInputMode {
+        case .addComment:
+            return Color(hex: AnalysisType.comment.colorHex) ?? settings.theme.accentColor
+        case .askQuestion:
+            return Color(hex: AnalysisType.customQuestion.colorHex) ?? settings.theme.accentColor
+        case .followUp:
+            return settings.theme.accentColor
+        }
+    }
+
+    /// Handle input submission based on current mode
+    private func submitInput() {
+        guard !followUpQuestion.isEmpty, let highlight = viewModel.selectedHighlight else { return }
+
+        switch viewModel.followUpInputMode {
+        case .followUp:
+            viewModel.askFollowUpQuestion(highlight: highlight, question: followUpQuestion)
+        case .askQuestion:
+            // Ask as new custom question
+            viewModel.askFollowUpQuestion(highlight: highlight, question: followUpQuestion)
+        case .addComment:
+            // Add comment without AI call
+            viewModel.addComment(to: highlight, text: followUpQuestion)
+        }
+
+        followUpQuestion = ""
+        isQuestionFocused = false
     }
 }
 

@@ -7,6 +7,14 @@ import SwiftUI
 import SwiftData
 import UIKit
 
+/// Input mode for the follow-up input box in AnalysisPanelView
+/// Controls placeholder text and submit behavior
+enum FollowUpInputMode: Equatable {
+    case followUp       // Normal follow-up to existing analysis
+    case askQuestion    // New custom question (no existing analysis selected)
+    case addComment     // Adding a comment (no AI call, just user text)
+}
+
 @Observable
 final class ReaderViewModel {
     // MARK: - Properties
@@ -22,6 +30,10 @@ final class ReaderViewModel {
     var showingAnalysisPanel = false
     var selectedText: String = ""
     var selectionRange: NSRange?
+
+    /// Current mode for the follow-up input box
+    /// Changes placeholder text and submit behavior
+    var followUpInputMode: FollowUpInputMode = .followUp
 
     // Highlights
     var currentChapterHighlights: [HighlightModel] = []
@@ -195,6 +207,7 @@ final class ReaderViewModel {
         selectedAnalysis = nil
         isAnalyzing = false  // Prevent stale loading state in new chapter
         customQuestion = ""  // Clear stale follow-up question
+        followUpInputMode = .followUp  // Reset input mode
 
         currentChapterIndex = index
         scrollOffset = 0
@@ -365,6 +378,7 @@ final class ReaderViewModel {
             selectedAnalysis = nil  // Clear stale analysis reference
             isAnalyzing = false
             customQuestion = ""  // Clear stale follow-up question
+            followUpInputMode = .followUp  // Reset input mode
             showingAnalysisPanel = false
         }
     }
@@ -830,9 +844,16 @@ final class ReaderViewModel {
 
         // Build priorAnalysisContext from the analysis being followed up
         // This includes the initial analysis result so AI knows the context
+        // For comments: use prompt (user's comment text) since response is empty
         var priorAnalysisContext: (type: AnalysisType, result: String)?
         if let analysis = analysisToFollowUp {
-            priorAnalysisContext = (type: analysis.analysisType, result: analysis.response)
+            if analysis.analysisType == .comment {
+                // Comments store user's text in prompt, response is empty
+                // Pass the comment as context so AI knows what user wrote
+                priorAnalysisContext = (type: analysis.analysisType, result: analysis.prompt)
+            } else {
+                priorAnalysisContext = (type: analysis.analysisType, result: analysis.response)
+            }
         }
 
         // Build conversation history from existing thread turns
@@ -881,10 +902,13 @@ final class ReaderViewModel {
                     }
                 case .completed:
                     await MainActor.run {
+                        // Check if this is the active job for this highlight BEFORE any state changes
+                        // This prevents parallel job interference (e.g., job A completing shouldn't reset
+                        // input mode while job B is still running)
+                        let isActiveJob = highlightToJobMap[highlightId] == jobId
+
                         if let result = job.result {
-                            // Only update UI state if this is still the active job for this highlight
-                            // Prevents older job from overwriting newer job's streaming state
-                            let isActiveJob = highlightToJobMap[highlightId] == jobId
+                            // Only update UI state if this is still the active job
                             if selectedHighlight?.id == highlightId && isActiveJob {
                                 analysisResult = result
                                 isAnalyzing = false
@@ -1001,13 +1025,23 @@ final class ReaderViewModel {
                         if highlightToJobMap[highlightId] == jobId {
                             highlightToJobMap.removeValue(forKey: highlightId)
                         }
+                        // Reset input mode only if:
+                        // 1. This highlight is still selected
+                        // 2. This was the active job (prevents parallel job A from resetting mode while B is active)
+                        if selectedHighlight?.id == highlightId && isActiveJob {
+                            followUpInputMode = .followUp
+                        }
                     }
                     return
                 case .error:
                     await MainActor.run {
-                        if selectedHighlight?.id == highlightId {
+                        // Check if this is the active job for this highlight
+                        // Prevents parallel job's error from disrupting newer job's state
+                        let isActiveJob = highlightToJobMap[highlightId] == jobId
+                        if selectedHighlight?.id == highlightId && isActiveJob {
                             analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
                             isAnalyzing = false
+                            followUpInputMode = .followUp
                         }
                         // Only remove if this job is still the tracked one
                         if highlightToJobMap[highlightId] == jobId {
@@ -1057,6 +1091,43 @@ final class ReaderViewModel {
 
         // Refresh highlights to ensure conversation data is loaded for marker taps
         loadHighlightsForCurrentChapter()
+    }
+
+    // MARK: - Custom Question Preparation
+
+    /// Prepares UI state for a new custom question thread
+    /// Called when user clicks "Ask Question" button to start a fresh question
+    ///
+    /// Key behaviors:
+    /// 1. Clears current analysis display (so streaming from other jobs doesn't show)
+    /// 2. Clears job mapping for current highlight (stops ongoing job from updating UI)
+    /// 3. Sets input mode to .askQuestion (changes placeholder and submit behavior)
+    ///
+    /// This conceptually "reserves" the panel for the new custom question,
+    /// even before the user types and submits. Any ongoing jobs will still
+    /// complete and save in the background, but won't affect the UI.
+    func prepareForNewCustomQuestion() {
+        guard let highlight = selectedHighlight else { return }
+
+        // Clear analysis state so UI shows empty/ready state
+        selectedAnalysis = nil
+        currentAnalysisType = .customQuestion
+        analysisResult = nil
+
+        // Set input mode for custom question placeholder
+        followUpInputMode = .askQuestion
+
+        // KEY: Clear job mapping for this highlight
+        // This prevents ongoing jobs from:
+        // - Updating analysisResult with their streaming content
+        // - Setting selectedAnalysis when they complete
+        // - Resetting followUpInputMode to .followUp
+        // The jobs still save to database - only UI updates are blocked
+        highlightToJobMap.removeValue(forKey: highlight.id)
+
+        #if DEBUG
+        print("[PrepareForNewCustomQuestion] Cleared state for highlight \(highlight.id.uuidString.prefix(8)) - ready for new custom question")
+        #endif
     }
 
     // MARK: - Highlight Selection
@@ -1114,7 +1185,59 @@ final class ReaderViewModel {
             }
         }
 
+        // Reset input mode to follow-up (fresh highlight context)
+        followUpInputMode = .followUp
+
         showingAnalysisPanel = true
+    }
+
+    // MARK: - Comment Management
+
+    /// Add a comment to a highlight (no AI call, just stores user's text)
+    /// Comment is stored as: prompt = user's comment, response = "" (empty)
+    /// This allows follow-up questions on comments to work like normal Q&A threads
+    func addComment(to highlight: HighlightModel, text: String) {
+        #if DEBUG
+        print("[Comment] Adding comment to highlight \(highlight.id.uuidString.prefix(8)): '\(text.prefix(30))...'")
+        #endif
+
+        let analysis = AIAnalysisModel(
+            analysisType: .comment,
+            prompt: text,      // User's comment text
+            response: ""       // No initial AI response for comments
+        )
+
+        analysis.highlight = highlight
+        highlight.analyses.append(analysis)
+        modelContext.insert(analysis)
+
+        // Update colorHex to comment color
+        let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: AnalysisType.comment.colorHex)
+
+        if hasActiveTextSelection {
+            pendingMarkerUpdatesQueue.append(markerUpdate)
+            #if DEBUG
+            print("[Comment] DEFERRED colorHex update - hasActiveTextSelection=true")
+            #endif
+        } else {
+            highlight.colorHex = AnalysisType.comment.colorHex
+            pendingMarkerUpdate = markerUpdate
+        }
+
+        try? modelContext.save()
+
+        // Set selected analysis to the new comment
+        selectedAnalysis = analysis
+        currentAnalysisType = .comment
+        analysisResult = nil  // No AI result for comments
+        isAnalyzing = false
+
+        // Reset input mode back to follow-up for future questions
+        followUpInputMode = .followUp
+
+        #if DEBUG
+        print("[Comment] COMPLETE: Created comment id=\(analysis.id.uuidString.prefix(8))")
+        #endif
     }
 
     // MARK: - Text Selection

@@ -94,9 +94,15 @@ final class HighlightAnalysisManager {
         }
 
         // Build prior context from existing analysis
+        // For comments: use prompt (user's comment text) since response is empty
         var priorAnalysisContext: (type: AnalysisType, result: String)?
         if let analysis = analysisToFollowUp {
-            priorAnalysisContext = (type: analysis.analysisType, result: analysis.response)
+            if analysis.analysisType == .comment {
+                // Comments store user's text in prompt, response is empty
+                priorAnalysisContext = (type: analysis.analysisType, result: analysis.prompt)
+            } else {
+                priorAnalysisContext = (type: analysis.analysisType, result: analysis.response)
+            }
         }
 
         // Build conversation history from existing thread
@@ -152,6 +158,26 @@ final class HighlightAnalysisManager {
         if let mostRecent = highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt }).first {
             selectAnalysis(mostRecent)
         }
+    }
+
+    /// Prepares UI state for a new custom question thread
+    /// Called when user clicks "Ask Question" button to start a fresh question
+    ///
+    /// Clears activeJobId so any ongoing job stops updating the UI.
+    /// The ongoing job will still complete and save, but won't affect display.
+    func prepareForNewCustomQuestion() {
+        selectedAnalysis = nil
+        currentAnalysisType = .customQuestion
+        analysisResult = nil
+        currentQuestion = ""
+
+        // Clear active job so ongoing job doesn't update UI
+        // Job will still complete and save in background
+        activeJobId = nil
+
+        #if DEBUG
+        print("[HighlightAnalysisManager] Prepared for new custom question")
+        #endif
     }
 
     // MARK: - Private Helpers

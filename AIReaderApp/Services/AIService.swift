@@ -760,13 +760,23 @@ final class AnalysisJobManager {
 
             // Include prior analysis context if user is asking a follow-up about a previous analysis
             // This enables context-aware follow-ups like: "The fact check mentioned X - tell me more about Y"
+            // For comments: the "result" is actually the user's comment text (not AI-generated)
             if let prior = priorAnalysisContext {
-                prompt += """
+                if prior.type == .comment {
+                    prompt += """
+
+                **User's Previous Comment:**
+                The user added this personal note about the selected text:
+                \(prior.result)
+                """
+                } else {
+                    prompt += """
 
                 **Previous AI Analysis (\(prior.type.displayName)):**
                 The user was viewing this analysis when they asked their question:
                 \(prior.result)
                 """
+                }
             }
 
             if !history.isEmpty {
