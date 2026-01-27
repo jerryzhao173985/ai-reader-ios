@@ -927,7 +927,9 @@ struct HighlightDetailSheet: View {
                             : settings.theme.accentColor
                         )
                 }
-                .disabled(followUpQuestion.isEmpty || manager?.isAnalyzing == true)
+                // Only disable when empty - allow parallel jobs during streaming
+                // (matches AnalysisPanelView pattern for consistent behavior)
+                .disabled(followUpQuestion.isEmpty)
             }
             .padding(12)
             .background(settings.theme.secondaryBackgroundColor)
