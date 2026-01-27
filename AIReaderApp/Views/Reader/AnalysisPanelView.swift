@@ -483,8 +483,8 @@ struct AnalysisPanelView: View {
 
             // Follow-up turns (if any)
             if let thread = analysis.thread, !thread.turns.isEmpty {
-                // Visual separator for non-custom-question analyses
-                if analysis.analysisType != .customQuestion {
+                // Visual separator for non-bubble analyses (not custom question or comment)
+                if analysis.analysisType != .customQuestion && analysis.analysisType != .comment {
                     HStack {
                         VStack { Divider() }
                         Text("Follow-ups")
@@ -506,8 +506,8 @@ struct AnalysisPanelView: View {
 
             // Current question being asked (if actively analyzing)
             if viewModel.isAnalyzing {
-                // Show separator if this is the first follow-up on a non-custom analysis
-                if analysis.analysisType != .customQuestion && (analysis.thread?.turns.isEmpty ?? true) {
+                // Show separator if this is the first follow-up on a non-bubble analysis
+                if analysis.analysisType != .customQuestion && analysis.analysisType != .comment && (analysis.thread?.turns.isEmpty ?? true) {
                     HStack {
                         VStack { Divider() }
                         Text("Follow-ups")
@@ -664,7 +664,8 @@ struct AnalysisPanelView: View {
                             .italic()
                     }
 
-                    markdownText(analysis.response)
+                    // Content preview: comments store text in prompt (response is empty), others use response
+                    markdownText(analysis.analysisType == .comment ? analysis.prompt : analysis.response)
                         .font(.caption)
                         .foregroundStyle(settings.theme.textColor)
                         .lineLimit(4)
@@ -982,7 +983,7 @@ struct AnalysisPanelView: View {
                 Button {
                     submitInput()
                 } label: {
-                    Image(systemName: submitButtonIcon)
+                    Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                         .foregroundStyle(
                             followUpQuestion.isEmpty
@@ -1010,16 +1011,6 @@ struct AnalysisPanelView: View {
             return "What would you like to know about this text?"
         case .addComment:
             return "Add your comment..."
-        }
-    }
-
-    /// Submit button icon based on mode
-    private var submitButtonIcon: String {
-        switch viewModel.followUpInputMode {
-        case .addComment:
-            return "arrow.up.circle.fill"
-        default:
-            return "arrow.up.circle.fill"
         }
     }
 

@@ -12,8 +12,8 @@
     },
     {
       "type": "technical",
-      "content": "Architecture: book.highlights = ALL (book-scoped), currentChapterHighlights = filtered for chapter. AIAnalysisModel.prompt/response = initial Q&A; thread.turns = follow-ups. For comments: prompt = user's text, response = '' (empty) - HighlightsView must show prompt for comments (not response). WKWebView: JS injection for marker/color updates (not loadHTMLString). ChapterContentView state: 3-field tuple (highlightId, colorHex, analysisCount) for dedup. Chapter-change cleanup clears pendingMarkerUpdate and pendingUndoRestore. Parallel analysis is SAFE: saveAnalysis() writes to SwiftData immediately. Two analysis viewing contexts: (1) AnalysisPanelView in reader (active reading), (2) HighlightDetailSheet in HighlightsView (review mode, uses HighlightAnalysisManager).",
-      "added_at": "2026-01-27T14:55:00.000000"
+      "content": "Architecture: book.highlights = ALL (book-scoped), currentChapterHighlights = filtered for chapter. AIAnalysisModel.prompt/response = initial Q&A; thread.turns = follow-ups. For comments: prompt = user's text, response = '' (empty). BOTH AnalysisPanelView (previousAnalysisCard) and HighlightsView (AnalysisCard) must show prompt for comments in card previews. WKWebView: JS injection for marker/color updates (not loadHTMLString). ChapterContentView state: 3-field tuple (highlightId, colorHex, analysisCount) for dedup. Chapter-change cleanup clears pendingMarkerUpdate and pendingUndoRestore. Parallel analysis is SAFE: saveAnalysis() writes to SwiftData immediately. Two analysis viewing contexts: (1) AnalysisPanelView in reader (active reading), (2) HighlightDetailSheet in HighlightsView (review mode, uses HighlightAnalysisManager).",
+      "added_at": "2026-01-27T22:40:00.000000"
     },
     {
       "type": "decision",
@@ -22,8 +22,8 @@
     },
     {
       "type": "convention",
-      "content": "Visual & SwiftUI Patterns: (1) Card styling: color.opacity(0.15) fill + color.opacity(0.3) stroke for HighlightRow, AnalysisCard, quote blocks. (2) Chat bubbles: User right-aligned (accentColor), AI left-aligned (secondaryBackgroundColor), Comment bubble (text.bubble icon + comment color). (3) List theming: .listRowSeparator(.hidden) + .listRowBackground(theme) + .scrollContentBackground(.hidden). (4) Sheet environment: Always pass .environment(settings) to sheets. (5) sheet(item:) pattern for optional data presentation. (6) ScrollViewReader + Transaction(disablesAnimations: true) for instant scroll reset. (7) All 5 quick analysis types + Ask Question + Comment shown in context menu. (8) Separator logic: No divider before follow-ups for bubble-style analyses (.customQuestion, .comment).",
-      "added_at": "2026-01-27T14:55:00.000000"
+      "content": "Visual & SwiftUI Patterns: (1) Card styling: color.opacity(0.15) fill + color.opacity(0.3) stroke for HighlightRow, AnalysisCard, quote blocks. (2) Chat bubbles: User right-aligned (accentColor), AI left-aligned (secondaryBackgroundColor), Comment bubble (text.bubble icon + comment color). (3) List theming: .listRowSeparator(.hidden) + .listRowBackground(theme) + .scrollContentBackground(.hidden). (4) Sheet environment: Always pass .environment(settings) to sheets. (5) sheet(item:) pattern for optional data presentation. (6) ScrollViewReader + Transaction(disablesAnimations: true) for instant scroll reset. (7) All 5 quick analysis types + Ask Question + Comment shown in context menu. (8) Separator logic: No divider before follow-ups for bubble-style analyses (.customQuestion, .comment) - applies to BOTH AnalysisPanelView and HighlightsView.",
+      "added_at": "2026-01-27T22:40:00.000000"
     },
     {
       "type": "future_enhancement",
@@ -34,5 +34,5 @@
   "manual_memories": [],
   "realtime_memories": [],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-27T21:35:00.000000"
+  "updated_at": "2026-01-27T22:40:00.000000"
 }
