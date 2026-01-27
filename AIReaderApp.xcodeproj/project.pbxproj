@@ -10,6 +10,7 @@
 		02F7CC0A432FD2847E204C19 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 563A3047A76910FC3FE5226A /* Assets.xcassets */; };
 		2CFB10756B8EEE950F535CE3 /* ReadingProgressModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 015B36C7044C39FEF5B58DFD /* ReadingProgressModel.swift */; };
 		339F44004F93D382061A6E69 /* ReaderViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F395F9DB6321152E762D60 /* ReaderViewModel.swift */; };
+		8563F91CD119B7CB4663CC34 /* HighlightAnalysisManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3A5A5CE458C68D90AB68625 /* HighlightAnalysisManager.swift */; };
 		3B54BD95AE9C1A88B2E38C88 /* HighlightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CE0DA47AC847A1D2CD8B12 /* HighlightsView.swift */; };
 		61BBF1867F40E8E143A99545 /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46B4981CBFC5729B993CE6B2 /* ReaderView.swift */; };
 		6BC0F1AE7467DF7B7287A1BB /* HighlightModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C2D868EA68FD6D63CE8C010 /* HighlightModel.swift */; };
@@ -44,6 +45,7 @@
 		9F7D9389DB5D46C4556E06C2 /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
 		A131E35F71DA9931B4ED368C /* AIAnalysisModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAnalysisModel.swift; sourceTree = "<group>"; };
 		B5F395F9DB6321152E762D60 /* ReaderViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderViewModel.swift; sourceTree = "<group>"; };
+		E3A5A5CE458C68D90AB68625 /* HighlightAnalysisManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightAnalysisManager.swift; sourceTree = "<group>"; };
 		BDCED0829DDA940AD2C1158C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C02D741DD5A416D907015502 /* AIReaderApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AIReaderApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0772A1E86674E79CE5384D0 /* BookModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookModel.swift; sourceTree = "<group>"; };
@@ -72,6 +74,7 @@
 			children = (
 				4FEB38F1F1C5DE058A513392 /* LibraryViewModel.swift */,
 				B5F395F9DB6321152E762D60 /* ReaderViewModel.swift */,
+				E3A5A5CE458C68D90AB68625 /* HighlightAnalysisManager.swift */,
 				4930A32ACB7ED94B64E1A085 /* SettingsManager.swift */,
 			);
 			path = ViewModels;
@@ -290,6 +293,7 @@
 				F675B0E0414AA2B4447BE2AB /* LibraryViewModel.swift in Sources */,
 				61BBF1867F40E8E143A99545 /* ReaderView.swift in Sources */,
 				339F44004F93D382061A6E69 /* ReaderViewModel.swift in Sources */,
+				8563F91CD119B7CB4663CC34 /* HighlightAnalysisManager.swift in Sources */,
 				2CFB10756B8EEE950F535CE3 /* ReadingProgressModel.swift in Sources */,
 				F5543F3F115D8EF6F60675ED /* SettingsManager.swift in Sources */,
 				71C65230E83C5BCF0090AE0E /* SettingsView.swift in Sources */,

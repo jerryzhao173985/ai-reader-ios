@@ -12,6 +12,7 @@ struct AnalysisPanelView: View {
     @Environment(SettingsManager.self) private var settings
 
     @State private var followUpQuestion = ""
+    @State private var highlightSearchText = ""
     @FocusState private var isQuestionFocused: Bool
 
     /// Tracks the highlight ID to scroll to when returning from analysis view to chapter highlights list
@@ -195,12 +196,33 @@ struct AnalysisPanelView: View {
             // Selected text box - styled with colored bar + border to match HighlightsView pattern
             quoteBlock(highlight: highlight)
 
-            // Quick Analysis Buttons + Delete
+            // Quick Analysis Buttons + Ask Question + Delete
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(AnalysisType.quickAnalysisTypes.prefix(4), id: \.self) { type in
+                    // All quick analysis types (Fact Check, Discussion, Key Points, Argument Map, Counterpoints)
+                    ForEach(AnalysisType.quickAnalysisTypes, id: \.self) { type in
                         analysisTypeButton(type, highlight: highlight)
                     }
+
+                    // Custom Question button - creates NEW custom question thread
+                    // Clears selectedAnalysis so askFollowUpQuestion creates new analysis instead of appending
+                    Button {
+                        viewModel.selectedAnalysis = nil  // Clear so NEW custom question is created
+                        viewModel.currentAnalysisType = .customQuestion  // Set type indicator
+                        isQuestionFocused = true
+                    } label: {
+                        Label("Ask Question", systemImage: AnalysisType.customQuestion.iconName)
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color(hex: AnalysisType.customQuestion.colorHex)?.opacity(0.2) ?? settings.theme.accentColor.opacity(0.2))
+                            )
+                            .foregroundStyle(Color(hex: AnalysisType.customQuestion.colorHex) ?? settings.theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isAnalyzing)
 
                     // Delete button (same style as analysis buttons)
                     Button {
@@ -301,15 +323,16 @@ struct AnalysisPanelView: View {
     // MARK: - Current Analysis View (loading or result)
     @ViewBuilder
     private var currentAnalysisView: some View {
-        // Any analysis with a thread OR streaming shows conversation view
+        // Any analysis with a thread OR streaming OR custom question shows conversation view
+        // Custom questions ALWAYS need conversation view to display the question
         // This allows follow-ups on Fact Check, Discussion, etc. - not just custom questions
         if let analysis = viewModel.selectedAnalysis {
-            if analysis.thread != nil || viewModel.isAnalyzing {
-                // Has follow-ups or actively streaming - show conversation view
+            if analysis.analysisType == .customQuestion || analysis.thread != nil || viewModel.isAnalyzing {
+                // Custom question OR has follow-ups OR actively streaming - show conversation view
                 analysisConversationView(analysis)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
-                // No thread, not analyzing - just show the result
+                // No thread, not analyzing, not custom question - just show the result
                 resultView(analysis.response)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -704,6 +727,15 @@ struct AnalysisPanelView: View {
     }
 
     // MARK: - Chapter Highlights Section
+    /// Filtered highlights based on search text
+    private var filteredChapterHighlights: [HighlightModel] {
+        let sorted = viewModel.currentChapterHighlights.sorted(by: { $0.startOffset < $1.startOffset })
+        if highlightSearchText.isEmpty {
+            return sorted
+        }
+        return sorted.filter { $0.selectedText.localizedCaseInsensitiveContains(highlightSearchText) }
+    }
+
     private var chapterHighlightsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -722,9 +754,46 @@ struct AnalysisPanelView: View {
                     .background(Capsule().fill(settings.theme.accentColor.opacity(0.2)))
             }
 
-            ForEach(viewModel.currentChapterHighlights.sorted(by: { $0.startOffset < $1.startOffset })) { highlight in
-                chapterHighlightRow(highlight)
-                    .id(highlight.id)  // Enable ScrollViewReader.scrollTo() targeting
+            // Search box for filtering highlights
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextField("Search highlights", text: $highlightSearchText)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline)
+
+                if !highlightSearchText.isEmpty {
+                    Button {
+                        highlightSearchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(settings.theme.backgroundColor)
+            )
+
+            // Show filtered results or empty search state
+            if filteredChapterHighlights.isEmpty && !highlightSearchText.isEmpty {
+                Text("No highlights matching \"\(highlightSearchText)\"")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 12)
+            } else {
+                ForEach(filteredChapterHighlights) { highlight in
+                    chapterHighlightRow(highlight)
+                        .id(highlight.id)  // Enable ScrollViewReader.scrollTo() targeting
+                }
             }
 
             // Hint to create more

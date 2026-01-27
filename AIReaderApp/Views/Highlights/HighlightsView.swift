@@ -392,17 +392,23 @@ struct HighlightRow: View {
 }
 
 // MARK: - Highlight Detail Sheet
-/// Shows all analyses for a single highlight in a sheet
-/// Mirrors AnalysisPanelView behavior but without reader context
+/// Shows all analyses for a single highlight in a sheet with full analysis capabilities
+/// Supports: new analyses, follow-up questions, streaming display
+/// Works independently of ReaderViewModel via HighlightAnalysisManager
 struct HighlightDetailSheet: View {
     let highlight: HighlightModel
     let book: BookModel
 
     @Environment(SettingsManager.self) private var settings
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    /// Currently expanded analysis (nil = show list)
-    @State private var expandedAnalysis: AIAnalysisModel?
+    /// Analysis manager - handles all analysis operations for this highlight
+    @State private var manager: HighlightAnalysisManager?
+
+    /// Follow-up question text field
+    @State private var followUpQuestion = ""
+    @FocusState private var isQuestionFocused: Bool
 
     private var chapterTitle: String {
         book.chapters.first(where: { $0.order == highlight.chapterIndex })?.title
@@ -422,49 +428,39 @@ struct HighlightDetailSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Scroll anchor at the top - enables programmatic scrolling
-                        Color.clear
-                            .frame(height: 0)
-                            .id("detail-top")
+            VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            // Scroll anchor at the top - enables programmatic scrolling
+                            Color.clear
+                                .frame(height: 0)
+                                .id("detail-top")
 
-                        // Highlighted text
-                        highlightTextSection
+                            // Highlighted text with analysis type buttons
+                            highlightTextSection
 
-                        Divider()
+                            Divider()
 
-                        // Analyses
-                        if highlight.analyses.isEmpty {
-                            noAnalysesView
-                        } else if let analysis = expandedAnalysis {
-                            // Show expanded analysis
-                            expandedAnalysisView(analysis)
-                        } else {
-                            // Show analysis cards list
-                            analysisCardsSection
+                            // Analyses content
+                            analysisContentSection
+                        }
+                        .padding()
+                    }
+                    .onChange(of: manager?.selectedAnalysis?.id) { _, _ in
+                        scrollToTop(proxy)
+                    }
+                    .onChange(of: manager?.isAnalyzing) { wasAnalyzing, isAnalyzing in
+                        // Scroll to top when starting a new analysis
+                        if isAnalyzing == true && wasAnalyzing != true {
+                            scrollToTop(proxy)
                         }
                     }
-                    .padding()
                 }
-                .onChange(of: expandedAnalysis) { _, _ in
-                    // When expanding or collapsing an analysis, scroll to top instantly
-                    // No animation prevents jarring visual jump
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        proxy.scrollTo("detail-top", anchor: .top)
-                    }
-                }
-                .onAppear {
-                    // Reset scroll position when sheet first appears
-                    // This prevents iOS from preserving scroll position from previous sheet presentations
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        proxy.scrollTo("detail-top", anchor: .top)
-                    }
+
+                // Follow-up input section (always visible when manager exists)
+                if manager != nil {
+                    followUpInputSection
                 }
             }
             .background(settings.theme.backgroundColor)
@@ -477,11 +473,13 @@ struct HighlightDetailSheet: View {
                     }
                 }
 
-                if expandedAnalysis != nil {
+                if manager?.selectedAnalysis != nil || manager?.isAnalyzing == true {
                     ToolbarItem(placement: .cancellationAction) {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
-                                expandedAnalysis = nil
+                                manager?.selectedAnalysis = nil
+                                manager?.analysisResult = nil
+                                manager?.isAnalyzing = false
                             }
                         } label: {
                             HStack(spacing: 4) {
@@ -492,16 +490,31 @@ struct HighlightDetailSheet: View {
                     }
                 }
             }
+            .onAppear {
+                // Initialize manager when sheet appears
+                manager = HighlightAnalysisManager(highlight: highlight, modelContext: modelContext)
+            }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 
+    private func scrollToTop(_ proxy: ScrollViewProxy) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo("detail-top", anchor: .top)
+        }
+    }
+
     // MARK: - Highlight Text Section
-    /// Color for the quote block - uses expanded analysis type color when viewing an analysis,
+    /// Color for the quote block - uses current analysis type color when viewing an analysis,
     /// otherwise uses the highlight's original color
     private var currentDisplayColor: Color {
-        if let analysis = expandedAnalysis {
+        if let type = manager?.currentAnalysisType {
+            return Color(hex: type.colorHex) ?? .blue
+        }
+        if let analysis = manager?.selectedAnalysis {
             return Color(hex: analysis.analysisType.colorHex) ?? .blue
         }
         return Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow
@@ -517,12 +530,12 @@ struct HighlightDetailSheet: View {
 
                 Spacer()
 
-                // Show current analysis type indicator when expanded
-                if let analysis = expandedAnalysis {
+                // Show current analysis type indicator when selected or analyzing
+                if let type = manager?.currentAnalysisType {
                     HStack(spacing: 4) {
-                        Image(systemName: analysis.analysisType.iconName)
+                        Image(systemName: type.iconName)
                             .font(.caption2)
-                        Text(analysis.analysisType.displayName)
+                        Text(type.displayName)
                             .font(.caption2.weight(.medium))
                     }
                     .foregroundStyle(currentDisplayColor)
@@ -550,13 +563,234 @@ struct HighlightDetailSheet: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(currentDisplayColor.opacity(0.3), lineWidth: 1)
             )
-            .animation(.easeInOut(duration: 0.2), value: expandedAnalysis?.id)
+            .animation(.easeInOut(duration: 0.2), value: manager?.selectedAnalysis?.id)
+            .animation(.easeInOut(duration: 0.2), value: manager?.currentAnalysisType)
+
+            // Analysis type buttons - enables creating new analyses from library view
+            analysisTypeButtonsSection
 
             // Date
             Text(highlight.createdAt.formatted(date: .abbreviated, time: .shortened))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    // MARK: - Analysis Type Buttons
+    /// Shows all quick analysis types + custom question option
+    private var analysisTypeButtonsSection: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                // All quick analysis types (Fact Check, Discussion, Key Points, Argument Map, Counterpoints)
+                ForEach(AnalysisType.quickAnalysisTypes, id: \.self) { type in
+                    analysisTypeButton(type)
+                }
+
+                // Custom Question button - creates NEW custom question thread
+                // Clears selectedAnalysis so askFollowUpQuestion creates new analysis instead of appending
+                Button {
+                    manager?.selectedAnalysis = nil  // Clear so NEW custom question is created
+                    manager?.currentAnalysisType = .customQuestion  // Set type indicator
+                    isQuestionFocused = true
+                } label: {
+                    Label("Ask Question", systemImage: AnalysisType.customQuestion.iconName)
+                        .font(.caption)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color(hex: AnalysisType.customQuestion.colorHex)?.opacity(0.2) ?? settings.theme.accentColor.opacity(0.2))
+                        )
+                        .foregroundStyle(Color(hex: AnalysisType.customQuestion.colorHex) ?? settings.theme.accentColor)
+                }
+                .buttonStyle(.plain)
+                .disabled(manager?.isAnalyzing == true)
+            }
+        }
+    }
+
+    private func analysisTypeButton(_ type: AnalysisType) -> some View {
+        Button {
+            manager?.performAnalysis(type: type)
+        } label: {
+            Label(type.displayName, systemImage: type.iconName)
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Color(hex: type.colorHex)?.opacity(0.2) ?? settings.theme.accentColor.opacity(0.2))
+                )
+                .foregroundStyle(Color(hex: type.colorHex) ?? settings.theme.accentColor)
+        }
+        .buttonStyle(.plain)
+        .disabled(manager?.isAnalyzing == true)
+    }
+
+    // MARK: - Analysis Content Section
+    @ViewBuilder
+    private var analysisContentSection: some View {
+        if manager?.isAnalyzing == true {
+            // Streaming/loading state
+            streamingAnalysisView
+        } else if let analysis = manager?.selectedAnalysis {
+            // Show selected analysis with conversation
+            expandedAnalysisView(analysis)
+        } else if highlight.analyses.isEmpty {
+            // No analyses yet
+            noAnalysesView
+        } else {
+            // Show analysis cards list
+            analysisCardsSection
+        }
+    }
+
+    // MARK: - Streaming Analysis View
+    /// Shows streaming content with full conversation context
+    private var streamingAnalysisView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Show the analysis type header
+            if let type = manager?.currentAnalysisType {
+                Label(type.displayName, systemImage: type.iconName)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color(hex: type.colorHex) ?? settings.theme.accentColor)
+            }
+
+            // If following up on existing analysis, show the prior context first
+            if let analysis = manager?.selectedAnalysis {
+                // Show the original analysis content
+                if analysis.analysisType == .customQuestion {
+                    // Custom question: show original Q&A in bubbles
+                    userMessageBubble(analysis.prompt)
+                    aiMessageBubble(analysis.response)
+                } else {
+                    // Other types: show the analysis result
+                    markdownText(analysis.response)
+                        .font(.subheadline)
+                        .foregroundStyle(settings.theme.textColor)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(settings.theme.secondaryBackgroundColor.opacity(0.5))
+                        )
+                }
+
+                // Show existing thread turns
+                if let thread = analysis.thread, !thread.turns.isEmpty {
+                    if analysis.analysisType != .customQuestion {
+                        followUpsDivider
+                    }
+                    ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
+                        userMessageBubble(turn.question)
+                        aiMessageBubble(turn.answer)
+                    }
+                }
+
+                // Show separator before new follow-up if needed
+                if analysis.analysisType != .customQuestion && (analysis.thread?.turns.isEmpty ?? true) {
+                    followUpsDivider
+                }
+            }
+
+            // Show the current question being asked
+            if let question = manager?.currentQuestion, !question.isEmpty {
+                userMessageBubble(question)
+            }
+
+            // Show streaming response or thinking indicator
+            if let result = manager?.analysisResult, !result.isEmpty {
+                aiMessageBubble(result, isStreaming: true)
+            } else {
+                thinkingBubble
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(settings.theme.backgroundColor)
+        )
+    }
+
+    // MARK: - Chat Bubble Components
+    /// User message bubble - right-aligned with accent color
+    private func userMessageBubble(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: 40)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(settings.theme.accentColor)
+                )
+        }
+    }
+
+    /// AI message bubble - left-aligned with secondary background
+    private func aiMessageBubble(_ text: String, isStreaming: Bool = false) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                markdownText(text)
+                    .font(.subheadline)
+                    .foregroundStyle(settings.theme.textColor)
+                    .textSelection(.enabled)
+
+                if isStreaming {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Thinking...")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(settings.theme.secondaryBackgroundColor)
+            )
+            Spacer(minLength: 40)
+        }
+    }
+
+    /// Thinking indicator bubble - shown when AI is processing but no output yet
+    private var thinkingBubble: some View {
+        HStack {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Thinking...")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(settings.theme.secondaryBackgroundColor)
+            )
+            Spacer(minLength: 40)
+        }
+    }
+
+    /// Visual separator for follow-ups section
+    private var followUpsDivider: some View {
+        HStack {
+            VStack { Divider() }
+            Text("Follow-ups")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            VStack { Divider() }
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: - Analysis Cards Section
@@ -569,7 +803,7 @@ struct HighlightDetailSheet: View {
             ForEach(highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt })) { analysis in
                 AnalysisCard(analysis: analysis, settings: settings) {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        expandedAnalysis = analysis
+                        manager?.selectAnalysis(analysis)
                     }
                 }
             }
@@ -577,111 +811,110 @@ struct HighlightDetailSheet: View {
     }
 
     // MARK: - Expanded Analysis View
-    /// Shows analysis content directly - type info is already shown in quote header
+    /// Shows analysis content with conversation thread
+    /// For custom questions: displays as conversation bubbles
+    /// For other types: displays analysis result, then any follow-up bubbles
     private func expandedAnalysisView(_ analysis: AIAnalysisModel) -> some View {
-        let typeColor = Color(hex: analysis.analysisType.colorHex) ?? .blue
+        VStack(alignment: .leading, spacing: 12) {
+            // Initial content depends on analysis type
+            if analysis.analysisType == .customQuestion {
+                // Custom questions: show initial Q&A as chat bubbles
+                userMessageBubble(analysis.prompt)
+                aiMessageBubble(analysis.response)
+            } else {
+                // Other types (Fact Check, Discussion, etc.): show the analysis result
+                VStack(alignment: .leading, spacing: 10) {
+                    markdownText(analysis.response)
+                        .font(.body)
+                        .foregroundStyle(settings.theme.textColor)
+                        .textSelection(.enabled)
 
-        return VStack(alignment: .leading, spacing: 16) {
-            // Analysis response - primary content (type already shown in quote header)
-            VStack(alignment: .leading, spacing: 10) {
-                markdownText(analysis.response)
-                    .font(.body)
-                    .foregroundStyle(settings.theme.textColor)
-                    .textSelection(.enabled)
-
-                // Analysis creation date (subtle)
-                Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    // Analysis creation date (subtle)
+                    Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(settings.theme.secondaryBackgroundColor)
+                )
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(settings.theme.secondaryBackgroundColor)
-            )
 
             // Thread turns (follow-up Q&A) - chat bubble style
             if let thread = analysis.thread, !thread.turns.isEmpty {
-                // Section header
-                HStack {
-                    VStack { Divider() }
-                    Text("Follow-up Q&A")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    VStack { Divider() }
+                // Show separator for non-custom-question analyses
+                if analysis.analysisType != .customQuestion {
+                    followUpsDivider
                 }
-                .padding(.vertical, 4)
 
                 ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
-                    VStack(alignment: .leading, spacing: 10) {
-                        // User question - right-aligned with "You" label
-                        HStack(alignment: .top) {
-                            Spacer(minLength: 50)
-                            VStack(alignment: .trailing, spacing: 4) {
-                                HStack(spacing: 4) {
-                                    Text("You")
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundStyle(.white.opacity(0.8))
-                                    Image(systemName: "person.circle.fill")
-                                        .font(.caption2)
-                                        .foregroundStyle(.white.opacity(0.8))
-                                }
-                                Text(turn.question)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.white)
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 18)
-                                    .fill(settings.theme.accentColor)
-                            )
-                        }
-
-                        // AI answer - left-aligned with "AI" label
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "sparkles")
-                                        .font(.caption2)
-                                        .foregroundStyle(typeColor)
-                                    Text("AI")
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundStyle(typeColor)
-                                }
-                                markdownText(turn.answer)
-                                    .font(.subheadline)
-                                    .foregroundStyle(settings.theme.textColor)
-                                    .textSelection(.enabled)
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 18)
-                                    .fill(settings.theme.secondaryBackgroundColor)
-                            )
-                            Spacer(minLength: 50)
-                        }
-                    }
-                    .padding(.vertical, 4)
+                    userMessageBubble(turn.question)
+                    aiMessageBubble(turn.answer)
                 }
             }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(settings.theme.backgroundColor)
+        )
+    }
+
+    // MARK: - Follow-up Input Section
+    private var followUpInputSection: some View {
+        VStack(spacing: 0) {
+            Divider()
+
+            HStack(spacing: 12) {
+                TextField("Ask a follow-up question...", text: $followUpQuestion, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline)
+                    .focused($isQuestionFocused)
+                    .lineLimit(1...4)
+
+                Button {
+                    if !followUpQuestion.isEmpty {
+                        manager?.askFollowUpQuestion(followUpQuestion)
+                        followUpQuestion = ""
+                        isQuestionFocused = false
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(
+                            followUpQuestion.isEmpty
+                            ? settings.theme.textColor.opacity(0.3)
+                            : settings.theme.accentColor
+                        )
+                }
+                .disabled(followUpQuestion.isEmpty || manager?.isAnalyzing == true)
+            }
+            .padding(12)
+            .background(settings.theme.secondaryBackgroundColor)
         }
     }
 
     // MARK: - No Analyses View
     private var noAnalysesView: some View {
         VStack(spacing: 12) {
-            Image(systemName: "doc.text.magnifyingglass")
+            Image(systemName: "brain.head.profile")
                 .font(.largeTitle)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [settings.theme.accentColor.opacity(0.6), settings.theme.accentColor.opacity(0.3)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
 
             Text("No Analyses Yet")
                 .font(.headline)
                 .foregroundStyle(.secondary)
 
-            Text("Open this highlight in the reader to add analyses.")
+            Text("Tap an analysis type above to get started!")
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
