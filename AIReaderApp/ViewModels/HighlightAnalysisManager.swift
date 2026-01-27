@@ -163,8 +163,14 @@ final class HighlightAnalysisManager {
     /// Prepares UI state for a new custom question thread
     /// Called when user clicks "Ask Question" button to start a fresh question
     ///
-    /// Clears activeJobId so any ongoing job stops updating the UI.
-    /// The ongoing job will still complete and save, but won't affect display.
+    /// Key behaviors:
+    /// 1. Clears current analysis display (so streaming from other jobs doesn't show)
+    /// 2. Clears activeJobId (stops ongoing job from updating UI)
+    /// 3. Sets currentAnalysisType to .customQuestion (for UI indicators)
+    ///
+    /// The ongoing job will still complete and save in the background,
+    /// but won't affect the UI (user is focused on new question).
+    /// This enables parallel job support matching ReaderViewModel's behavior.
     func prepareForNewCustomQuestion() {
         selectedAnalysis = nil
         currentAnalysisType = .customQuestion
@@ -188,30 +194,50 @@ final class HighlightAnalysisManager {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05s
 
                 guard let job = jobManager.getJob(jobId) else { break }
-                guard activeJobId == jobId else { break }  // Job was superseded
+                // NOTE: Don't break if not active - job should still complete and save
+                // Only skip UI updates for non-active jobs
 
                 switch job.status {
                 case .streaming:
                     await MainActor.run {
-                        if !job.streamingResult.isEmpty {
+                        // Only update UI if this is the active job
+                        if activeJobId == jobId && !job.streamingResult.isEmpty {
                             analysisResult = job.streamingResult
                         }
                     }
                 case .completed:
                     await MainActor.run {
+                        let isActiveJob = activeJobId == jobId
+
                         if let result = job.result {
-                            analysisResult = result
-                            isAnalyzing = false
-                            saveAnalysis(type: type, prompt: question ?? highlight.selectedText, response: result)
+                            // Only update UI if this is the active job
+                            if isActiveJob {
+                                analysisResult = result
+                                isAnalyzing = false
+                            }
+
+                            // ALWAYS save, regardless of active status
+                            // This enables parallel jobs: user can start new question while
+                            // previous job completes and saves in background
+                            saveAnalysis(type: type, prompt: question ?? highlight.selectedText, response: result, isActiveJob: isActiveJob)
                         }
-                        activeJobId = nil
+
+                        // Only clear activeJobId if this is still the tracked job
+                        if isActiveJob {
+                            activeJobId = nil
+                        }
                     }
                     return
                 case .error:
                     await MainActor.run {
-                        analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
-                        isAnalyzing = false
-                        activeJobId = nil
+                        let isActiveJob = activeJobId == jobId
+                        // Only show error if this is the active job
+                        if isActiveJob {
+                            analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
+                            isAnalyzing = false
+                            activeJobId = nil
+                        }
+                        // Non-active job errors are silently ignored (user moved on)
                     }
                     return
                 case .queued, .running:
@@ -227,40 +253,60 @@ final class HighlightAnalysisManager {
                 try? await Task.sleep(nanoseconds: 50_000_000)
 
                 guard let job = jobManager.getJob(jobId) else { break }
-                guard activeJobId == jobId else { break }
+                // NOTE: Don't break if not active - job should still complete and save
+                // Only skip UI updates for non-active jobs
 
                 switch job.status {
                 case .streaming:
                     await MainActor.run {
-                        if !job.streamingResult.isEmpty {
+                        // Only update UI if this is the active job
+                        if activeJobId == jobId && !job.streamingResult.isEmpty {
                             analysisResult = job.streamingResult
                         }
                     }
                 case .completed:
                     await MainActor.run {
-                        if let result = job.result {
-                            analysisResult = result
-                            isAnalyzing = false
+                        let isActiveJob = activeJobId == jobId
 
+                        if let result = job.result {
+                            // Only update UI if this is the active job
+                            if isActiveJob {
+                                analysisResult = result
+                                isAnalyzing = false
+                                currentQuestion = ""
+                            }
+
+                            // ALWAYS save, regardless of active status
                             if let analysis = analysisToFollowUp {
                                 // Add turn to existing analysis thread
                                 addTurnToThread(analysis: analysis, question: question, answer: result)
-                                selectedAnalysis = analysis
+                                // Only update selectedAnalysis if active
+                                if isActiveJob {
+                                    selectedAnalysis = analysis
+                                }
                             } else {
                                 // Create new custom question analysis
-                                saveAnalysis(type: .customQuestion, prompt: question, response: result)
+                                saveAnalysis(type: .customQuestion, prompt: question, response: result, isActiveJob: isActiveJob)
                             }
                         }
-                        activeJobId = nil
-                        currentQuestion = ""
+
+                        // Only clear activeJobId if this is still the tracked job
+                        if isActiveJob {
+                            activeJobId = nil
+                        }
                     }
                     return
                 case .error:
                     await MainActor.run {
-                        analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
-                        isAnalyzing = false
-                        activeJobId = nil
-                        currentQuestion = ""
+                        let isActiveJob = activeJobId == jobId
+                        // Only show error if this is the active job
+                        if isActiveJob {
+                            analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
+                            isAnalyzing = false
+                            activeJobId = nil
+                            currentQuestion = ""
+                        }
+                        // Non-active job errors are silently ignored (user moved on)
                     }
                     return
                 case .queued, .running:
@@ -270,7 +316,7 @@ final class HighlightAnalysisManager {
         }
     }
 
-    private func saveAnalysis(type: AnalysisType, prompt: String, response: String) {
+    private func saveAnalysis(type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true) {
         let analysis = AIAnalysisModel(
             analysisType: type,
             prompt: prompt,
@@ -284,14 +330,27 @@ final class HighlightAnalysisManager {
         modelContext.insert(analysis)
         try? modelContext.save()
 
-        selectedAnalysis = analysis
+        // Only update selectedAnalysis if this is the active job
+        // Prevents background job from hijacking UI when user is focused on new question
+        if isActiveJob {
+            selectedAnalysis = analysis
+        }
 
         #if DEBUG
-        print("[HighlightAnalysisManager] SAVED: \(type.displayName) id=\(analysis.id.uuidString.prefix(8))")
+        print("[HighlightAnalysisManager] SAVED: \(type.displayName) id=\(analysis.id.uuidString.prefix(8)) isActiveJob=\(isActiveJob)")
         #endif
     }
 
     private func addTurnToThread(analysis: AIAnalysisModel, question: String, answer: String) {
+        // Safety check: verify analysis still exists in highlight's analyses
+        // It might have been deleted via X button while job was running
+        guard highlight.analyses.contains(where: { $0.id == analysis.id }) else {
+            #if DEBUG
+            print("[HighlightAnalysisManager] SKIPPED: Analysis was deleted during job")
+            #endif
+            return
+        }
+
         // Check for duplicate
         if let existingTurns = analysis.thread?.turns,
            existingTurns.contains(where: { $0.question == question && $0.answer == answer }) {
