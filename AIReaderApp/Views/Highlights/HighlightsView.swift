@@ -664,6 +664,12 @@ struct HighlightDetailSheet: View {
                     // Custom question: show original Q&A in bubbles
                     userMessageBubble(analysis.prompt)
                     aiMessageBubble(analysis.response)
+                } else if analysis.analysisType == .comment {
+                    // Comment: show user's note (no initial AI response)
+                    commentBubble(analysis.prompt)
+                    if !analysis.response.isEmpty {
+                        aiMessageBubble(analysis.response)
+                    }
                 } else {
                     // Other types: show the analysis result
                     markdownText(analysis.response)
@@ -680,7 +686,8 @@ struct HighlightDetailSheet: View {
 
                 // Show existing thread turns
                 if let thread = analysis.thread, !thread.turns.isEmpty {
-                    if analysis.analysisType != .customQuestion {
+                    // Show separator for non-bubble analyses
+                    if analysis.analysisType != .customQuestion && analysis.analysisType != .comment {
                         followUpsDivider
                     }
                     ForEach(thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex })) { turn in
@@ -689,8 +696,8 @@ struct HighlightDetailSheet: View {
                     }
                 }
 
-                // Show separator before new follow-up if needed
-                if analysis.analysisType != .customQuestion && (analysis.thread?.turns.isEmpty ?? true) {
+                // Show separator before new follow-up if needed (for non-bubble types)
+                if analysis.analysisType != .customQuestion && analysis.analysisType != .comment && (analysis.thread?.turns.isEmpty ?? true) {
                     followUpsDivider
                 }
             }
@@ -761,6 +768,28 @@ struct HighlightDetailSheet: View {
         }
     }
 
+    /// Comment bubble - right-aligned with comment color (distinct from user questions)
+    /// Shows the user's personal note/comment on the highlighted text
+    private func commentBubble(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: 40)
+            HStack(spacing: 6) {
+                Image(systemName: "text.bubble")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                Text(text)
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(hex: AnalysisType.comment.colorHex) ?? settings.theme.accentColor)
+            )
+        }
+    }
+
     /// Thinking indicator bubble - shown when AI is processing but no output yet
     private var thinkingBubble: some View {
         HStack {
@@ -813,6 +842,7 @@ struct HighlightDetailSheet: View {
     // MARK: - Expanded Analysis View
     /// Shows analysis content with conversation thread
     /// For custom questions: displays as conversation bubbles
+    /// For comments: displays comment bubble (user's note, no initial AI response)
     /// For other types: displays analysis result, then any follow-up bubbles
     private func expandedAnalysisView(_ analysis: AIAnalysisModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -821,6 +851,13 @@ struct HighlightDetailSheet: View {
                 // Custom questions: show initial Q&A as chat bubbles
                 userMessageBubble(analysis.prompt)
                 aiMessageBubble(analysis.response)
+            } else if analysis.analysisType == .comment {
+                // Comments: show user's note as comment bubble (no initial AI response)
+                commentBubble(analysis.prompt)
+                // If response is not empty (shouldn't happen for new comments), show it
+                if !analysis.response.isEmpty {
+                    aiMessageBubble(analysis.response)
+                }
             } else {
                 // Other types (Fact Check, Discussion, etc.): show the analysis result
                 VStack(alignment: .leading, spacing: 10) {
@@ -844,8 +881,8 @@ struct HighlightDetailSheet: View {
 
             // Thread turns (follow-up Q&A) - chat bubble style
             if let thread = analysis.thread, !thread.turns.isEmpty {
-                // Show separator for non-custom-question analyses
-                if analysis.analysisType != .customQuestion {
+                // Show separator for non-bubble analyses (not custom question or comment)
+                if analysis.analysisType != .customQuestion && analysis.analysisType != .comment {
                     followUpsDivider
                 }
 
@@ -977,8 +1014,9 @@ struct AnalysisCard: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                // Preview of response (with markdown support)
-                analysisPreviewText(analysis.response)
+                // Preview of content (with markdown support)
+                // Comments: show prompt (user's text), Others: show response (AI result)
+                analysisPreviewText(analysis.analysisType == .comment ? analysis.prompt : analysis.response)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
