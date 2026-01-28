@@ -72,6 +72,10 @@ final class AIAnalysisModel {
     var prompt: String
     var response: String
 
+    // MARK: - Model Info (defaults enable migration of existing data)
+    var modelUsed: String = "unknown"   // e.g., "gpt-5.2", "gpt-4o"
+    var usedWebSearch: Bool = false     // Whether web search tool was used
+
     // MARK: - Threading for Conversations
     @Relationship(deleteRule: .cascade, inverse: \AnalysisThreadModel.analysis)
     var thread: AnalysisThreadModel?
@@ -85,16 +89,27 @@ final class AIAnalysisModel {
         set { analysisTypeRaw = newValue.rawValue }
     }
 
+    /// Display-friendly model name (e.g., "GPT-5.2", "GPT-4o")
+    /// Returns nil for legacy analyses without model tracking
+    var modelDisplayName: String? {
+        guard modelUsed != "unknown" else { return nil }
+        return modelUsed.uppercased()
+    }
+
     init(
         id: UUID = UUID(),
         analysisType: AnalysisType,
         prompt: String,
-        response: String
+        response: String,
+        modelUsed: String = "unknown",  // Default matches property for legacy/comments
+        usedWebSearch: Bool = false
     ) {
         self.id = id
         self.analysisTypeRaw = analysisType.rawValue
         self.prompt = prompt
         self.response = response
+        self.modelUsed = modelUsed
+        self.usedWebSearch = usedWebSearch
         self.createdAt = Date()
     }
 }

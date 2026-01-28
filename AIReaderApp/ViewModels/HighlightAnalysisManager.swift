@@ -327,7 +327,9 @@ final class HighlightAnalysisManager {
         let analysis = AIAnalysisModel(
             analysisType: type,
             prompt: prompt,
-            response: response
+            response: response,
+            modelUsed: jobManager.modelId,
+            usedWebSearch: jobManager.isWebSearchEnabled
         )
 
         analysis.highlight = highlight

@@ -644,9 +644,28 @@ struct AnalysisPanelView: View {
 
                         Spacer()
 
-                        Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        // Model, web search, and timestamp
+                        HStack(spacing: 4) {
+                            if let modelName = analysis.modelDisplayName {
+                                Text(modelName)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+
+                                if analysis.usedWebSearch {
+                                    Image(systemName: "globe")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+
+                                Text("•")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+
+                            Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
 
                         // Indicate tappable (leave space for X button)
                         Image(systemName: "chevron.right")

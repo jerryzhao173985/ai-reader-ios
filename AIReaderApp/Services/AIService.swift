@@ -124,17 +124,16 @@ final class AIService {
         self.session = URLSession(configuration: sessionConfig)
     }
 
-    /// Read web search setting live from UserDefaults
-    /// This ensures we always use the current setting, even if it changed after AIService was created
-    /// Important: This must match the key used in SettingsManager.Keys.webSearchEnabled
-    private var isWebSearchEnabledLive: Bool {
-        let defaults = UserDefaults.standard
-        // Only check for GPT-5.2 since web search requires Responses API
-        guard config.provider == .gpt5_2 else { return false }
-        if defaults.object(forKey: "settings.webSearchEnabled") != nil {
-            return defaults.bool(forKey: "settings.webSearchEnabled")
-        }
-        return false
+    /// Whether web search is enabled for this session
+    /// Requires both: (1) GPT-5.2 provider (web search uses Responses API) AND (2) setting enabled
+    /// Since settings can only be changed by exiting the book, config is always fresh
+    var isWebSearchEnabled: Bool {
+        config.provider == .gpt5_2 && config.webSearchEnabled
+    }
+
+    /// The model ID used for this session (e.g., "gpt-5.2", "gpt-4o")
+    var modelId: String {
+        config.provider.modelId
     }
 
     // MARK: - Public API
@@ -411,11 +410,9 @@ final class AIService {
                     "effort": config.reasoningEffort
                 ]
 
-                // Add web search tool if enabled (read live from UserDefaults)
-                // This allows the model to search the web for up-to-date information
-                // relevant to the selected text, concepts, claims, and references
-                // Using isWebSearchEnabledLive ensures we pick up setting changes mid-session
-                if isWebSearchEnabledLive {
+                // Add web search tool if enabled
+                // Allows model to search for up-to-date information relevant to the selected text
+                if config.webSearchEnabled {
                     body["tools"] = [
                         [
                             "type": "web_search",
@@ -688,10 +685,9 @@ final class AIService {
             "effort": config.reasoningEffort
         ]
 
-        // Add web search tool if enabled (read live from UserDefaults)
+        // Add web search tool if enabled
         // Using search_context_size "high" for maximum context from search results
-        // Using isWebSearchEnabledLive ensures we pick up setting changes mid-session
-        if isWebSearchEnabledLive {
+        if config.webSearchEnabled {
             body["tools"] = [
                 [
                     "type": "web_search",
@@ -980,6 +976,12 @@ final class AnalysisJobManager {
     private(set) var jobs: [UUID: Job] = [:]
     private let aiService: AIService
 
+    /// Model ID for the current session (e.g., "gpt-5.2", "gpt-4o")
+    var modelId: String { aiService.modelId }
+
+    /// Whether web search is enabled for the current session
+    var isWebSearchEnabled: Bool { aiService.isWebSearchEnabled }
+
     init(aiService: AIService = AIService()) {
         self.aiService = aiService
     }
@@ -995,7 +997,10 @@ final class AnalysisJobManager {
         priorAnalysisContext: (type: AnalysisType, result: String)? = nil
     ) -> UUID {
         let jobId = UUID()
-        jobs[jobId] = Job(id: jobId, status: .queued)
+        jobs[jobId] = Job(
+            id: jobId,
+            status: .queued
+        )
 
         Task {
             await runJobStreaming(
@@ -1072,15 +1077,6 @@ final class AnalysisJobManager {
                 jobs[id]?.error = error
             }
         }
-    }
-
-    /// Check if web search is enabled from UserDefaults
-    private var isWebSearchEnabled: Bool {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: "settings.webSearchEnabled") != nil {
-            return defaults.bool(forKey: "settings.webSearchEnabled")
-        }
-        return false
     }
 
     /// Get web search guidance specific to each analysis type

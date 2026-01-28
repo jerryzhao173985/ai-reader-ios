@@ -866,10 +866,28 @@ struct HighlightDetailSheet: View {
                         .foregroundStyle(settings.theme.textColor)
                         .textSelection(.enabled)
 
-                    // Analysis creation date (subtle)
-                    Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    // Model, web search, and creation date (subtle)
+                    HStack(spacing: 4) {
+                        if let modelName = analysis.modelDisplayName {
+                            Text(modelName)
+                                .font(.caption2)
+                                .foregroundStyle(.quaternary)
+
+                            if analysis.usedWebSearch {
+                                Image(systemName: "globe")
+                                    .font(.caption2)
+                                    .foregroundStyle(.quaternary)
+                            }
+
+                            Text("•")
+                                .font(.caption2)
+                                .foregroundStyle(.quaternary)
+                        }
+
+                        Text(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)

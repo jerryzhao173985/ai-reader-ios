@@ -64,6 +64,8 @@ final class ReaderViewModel {
             let prompt: String
             let response: String
             let createdAt: Date
+            let modelUsed: String
+            let usedWebSearch: Bool
             let turns: [(question: String, answer: String, turnIndex: Int)]
         }
     }
@@ -340,6 +342,8 @@ final class ReaderViewModel {
                 prompt: analysis.prompt,
                 response: analysis.response,
                 createdAt: analysis.createdAt,
+                modelUsed: analysis.modelUsed,
+                usedWebSearch: analysis.usedWebSearch,
                 turns: turns
             )
         }
@@ -413,7 +417,9 @@ final class ReaderViewModel {
             let analysis = AIAnalysisModel(
                 analysisType: analysisData.type,
                 prompt: analysisData.prompt,
-                response: analysisData.response
+                response: analysisData.response,
+                modelUsed: analysisData.modelUsed,
+                usedWebSearch: analysisData.usedWebSearch
             )
             // Preserve original creation date
             analysis.createdAt = analysisData.createdAt
@@ -711,7 +717,9 @@ final class ReaderViewModel {
         let analysis = AIAnalysisModel(
             analysisType: type,
             prompt: prompt,
-            response: response
+            response: response,
+            modelUsed: analysisJobManager.modelId,
+            usedWebSearch: analysisJobManager.isWebSearchEnabled
         )
 
         analysis.highlight = highlight
@@ -973,7 +981,9 @@ final class ReaderViewModel {
                                         let analysis = AIAnalysisModel(
                                             analysisType: .customQuestion,
                                             prompt: question,
-                                            response: result
+                                            response: result,
+                                            modelUsed: analysisJobManager.modelId,
+                                            usedWebSearch: analysisJobManager.isWebSearchEnabled
                                         )
                                         analysis.highlight = freshHighlight
                                         freshHighlight.analyses.append(analysis)
