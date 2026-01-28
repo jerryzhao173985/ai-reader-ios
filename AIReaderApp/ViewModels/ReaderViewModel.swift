@@ -670,9 +670,10 @@ final class ReaderViewModel {
                             // Only save if highlight wasn't deleted while analysis was running
                             // Use book.highlights (not currentChapterHighlights) so analysis saves
                             // even when user switches chapters during background processing
-                            if book.highlights.contains(where: { $0.id == highlightId }) {
+                            // Fetch fresh highlight from context (not captured reference) for Sendable safety
+                            if let freshHighlight = book.highlights.first(where: { $0.id == highlightId }) {
                                 saveAnalysis(
-                                    to: highlight,
+                                    to: freshHighlight,
                                     type: type,
                                     prompt: question ?? text,
                                     response: result,
@@ -878,6 +879,7 @@ final class ReaderViewModel {
         // Track which job belongs to which highlight for proper streaming display
         // This ensures parallel follow-ups don't interfere with each other
         let highlightId = highlight.id
+        let analysisToFollowUpId = analysisToFollowUp?.id  // Capture ID for Sendable safety
         highlightToJobMap[highlightId] = jobId
 
         // Poll for streaming updates and completion
@@ -918,12 +920,13 @@ final class ReaderViewModel {
                             // Use book.highlights (not currentChapterHighlights) so analysis saves
                             // even when user switches chapters during background processing
                             if let freshHighlight = book.highlights.first(where: { $0.id == highlightId }) {
-                                if let analysis = analysisToFollowUp {
-                                    // Verify analysis wasn't deleted while streaming
-                                    // The captured analysisToFollowUp might have been deleted via X button
-                                    guard freshHighlight.analyses.contains(where: { $0.id == analysis.id }) else {
+                                // Look up fresh analysis using captured ID (Sendable safe)
+                                if let analysisId = analysisToFollowUpId {
+                                    // Analysis was selected - try to find it (might have been deleted)
+                                    guard let analysis = freshHighlight.analyses.first(where: { $0.id == analysisId }) else {
+                                        // Analysis was deleted during streaming
                                         #if DEBUG
-                                        print("[FollowUp] ABORTED: Analysis \(analysis.id.uuidString.prefix(8)) was deleted during streaming")
+                                        print("[FollowUp] ABORTED: Analysis \(analysisId.uuidString.prefix(8)) was deleted during streaming")
                                         #endif
                                         // Clean up: reset UI state if this was the active job
                                         if highlightToJobMap[highlightId] == jobId {
@@ -954,9 +957,9 @@ final class ReaderViewModel {
                                         selectedAnalysis = analysis
                                     }
                                 } else {
-                                    // No analysis was selected - create new custom question analysis
+                                    // No analysis was selected (analysisToFollowUpId == nil) - create new custom question analysis
                                     // Check if an identical custom question already exists (double-tap protection)
-                                    let isDuplicate = highlight.analyses.contains { existing in
+                                    let isDuplicate = freshHighlight.analyses.contains { existing in
                                         existing.analysisType == .customQuestion &&
                                         existing.prompt == question &&
                                         existing.response == result
@@ -972,8 +975,8 @@ final class ReaderViewModel {
                                             prompt: question,
                                             response: result
                                         )
-                                        analysis.highlight = highlight
-                                        highlight.analyses.append(analysis)
+                                        analysis.highlight = freshHighlight
+                                        freshHighlight.analyses.append(analysis)
                                         // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
                                         modelContext.insert(analysis)
                                         try? modelContext.save()
@@ -993,23 +996,23 @@ final class ReaderViewModel {
                                         }
 
                                         // Use same deferral logic as saveAnalysis() for colorHex and marker updates
-                                        let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
+                                        let markerUpdate = (highlightId: freshHighlight.id, analysisCount: freshHighlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
                                         if hasActiveTextSelection {
                                             pendingMarkerUpdatesQueue.append(markerUpdate)
                                             #if DEBUG
-                                            print("[FollowUp] DEFERRED colorHex update for highlight \(highlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
+                                            print("[FollowUp] DEFERRED colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
                                             #endif
                                         } else {
-                                            let oldColor = highlight.colorHex
-                                            highlight.colorHex = AnalysisType.customQuestion.colorHex
+                                            let oldColor = freshHighlight.colorHex
+                                            freshHighlight.colorHex = AnalysisType.customQuestion.colorHex
                                             do {
                                                 try modelContext.save()
                                                 #if DEBUG
-                                                print("[FollowUp] IMMEDIATE colorHex update for highlight \(highlight.id.uuidString.prefix(8)): \(oldColor) → \(AnalysisType.customQuestion.colorHex)")
+                                                print("[FollowUp] IMMEDIATE colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)): \(oldColor) → \(AnalysisType.customQuestion.colorHex)")
                                                 #endif
                                             } catch {
                                                 #if DEBUG
-                                                print("[FollowUp] ERROR saving colorHex for highlight \(highlight.id.uuidString.prefix(8)): \(error)")
+                                                print("[FollowUp] ERROR saving colorHex for highlight \(freshHighlight.id.uuidString.prefix(8)): \(error)")
                                                 #endif
                                             }
                                             pendingMarkerUpdate = markerUpdate

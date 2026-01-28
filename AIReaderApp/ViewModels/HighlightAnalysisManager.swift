@@ -126,7 +126,8 @@ final class HighlightAnalysisManager {
         activeJobId = jobId
 
         // Poll for streaming updates
-        pollFollowUpJob(jobId: jobId, question: question, analysisToFollowUp: analysisToFollowUp)
+        // Pass ID instead of object for Sendable safety
+        pollFollowUpJob(jobId: jobId, question: question, analysisToFollowUpId: analysisToFollowUp?.id)
     }
 
     /// Select an analysis for viewing
@@ -247,7 +248,7 @@ final class HighlightAnalysisManager {
         }
     }
 
-    private func pollFollowUpJob(jobId: UUID, question: String, analysisToFollowUp: AIAnalysisModel?) {
+    private func pollFollowUpJob(jobId: UUID, question: String, analysisToFollowUpId: UUID?) {
         Task {
             while true {
                 try? await Task.sleep(nanoseconds: 50_000_000)
@@ -277,15 +278,21 @@ final class HighlightAnalysisManager {
                             }
 
                             // ALWAYS save, regardless of active status
-                            if let analysis = analysisToFollowUp {
-                                // Add turn to existing analysis thread
-                                addTurnToThread(analysis: analysis, question: question, answer: result)
-                                // Only update selectedAnalysis if active
-                                if isActiveJob {
-                                    selectedAnalysis = analysis
+                            // Look up fresh analysis using captured ID (Sendable safe)
+                            if let analysisId = analysisToFollowUpId {
+                                // Analysis was selected - try to find it (might have been deleted)
+                                if let analysis = highlight.analyses.first(where: { $0.id == analysisId }) {
+                                    // Add turn to existing analysis thread
+                                    addTurnToThread(analysis: analysis, question: question, answer: result)
+                                    // Only update selectedAnalysis if active
+                                    if isActiveJob {
+                                        selectedAnalysis = analysis
+                                    }
                                 }
+                                // If analysis was deleted during streaming, silently ignore
+                                // (user deleted it, they don't want the follow-up)
                             } else {
-                                // Create new custom question analysis
+                                // No analysis was selected - create new custom question analysis
                                 saveAnalysis(type: .customQuestion, prompt: question, response: result, isActiveJob: isActiveJob)
                             }
                         }

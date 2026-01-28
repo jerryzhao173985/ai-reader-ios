@@ -333,8 +333,7 @@ struct ChapterWebView: UIViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "textSelection")
         configuration.userContentController.add(context.coordinator, name: "highlightTapped")
 
-        // Enable text selection
-        configuration.preferences.javaScriptEnabled = true
+        // Enable JavaScript for text selection and highlight interactions
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -548,7 +547,7 @@ struct ChapterWebView: UIViewRepresentable {
         // Generate highlight CSS
         var highlightStyles = ""
         for (index, highlight) in highlights.enumerated() {
-            let color = highlight.colorHex ?? "#FFEB3B"
+            let color = highlight.colorHex
             highlightStyles += """
             .highlight-\(highlight.id.uuidString.replacingOccurrences(of: "-", with: "")) {
                 background-color: \(color)40;

@@ -327,7 +327,7 @@ struct HighlightRow: View {
     let settings: SettingsManager
 
     private var highlightColor: Color {
-        Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow
+        Color(hex: highlight.colorHex) ?? .yellow
     }
 
     var body: some View {
@@ -517,7 +517,7 @@ struct HighlightDetailSheet: View {
         if let analysis = manager?.selectedAnalysis {
             return Color(hex: analysis.analysisType.colorHex) ?? .blue
         }
-        return Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow
+        return Color(hex: highlight.colorHex) ?? .yellow
     }
 
     private var highlightTextSection: some View {

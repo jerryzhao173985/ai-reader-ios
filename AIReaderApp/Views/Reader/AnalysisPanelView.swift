@@ -246,7 +246,7 @@ struct AnalysisPanelView: View {
 
     /// Quote block styled with colored bar + border - aligned with HighlightsView pattern
     private func quoteBlock(highlight: HighlightModel) -> some View {
-        let quoteColor = Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow
+        let quoteColor = Color(hex: highlight.colorHex) ?? .yellow
         return HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(quoteColor)
@@ -881,7 +881,7 @@ struct AnalysisPanelView: View {
                                 .padding(.vertical, 1)
                                 .background(
                                     Capsule()
-                                        .fill(Color(hex: highlight.colorHex ?? "#FFEB3B") ?? .yellow)
+                                        .fill(Color(hex: highlight.colorHex) ?? .yellow)
                                 )
                         }
                     } else {
@@ -901,11 +901,11 @@ struct AnalysisPanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(hex: highlight.colorHex ?? "#FFEB3B")?.opacity(0.15) ?? Color.yellow.opacity(0.15))
+                    .fill(Color(hex: highlight.colorHex)?.opacity(0.15) ?? Color.yellow.opacity(0.15))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(hex: highlight.colorHex ?? "#FFEB3B")?.opacity(0.3) ?? Color.yellow.opacity(0.3), lineWidth: 1)
+                    .stroke(Color(hex: highlight.colorHex)?.opacity(0.3) ?? Color.yellow.opacity(0.3), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
