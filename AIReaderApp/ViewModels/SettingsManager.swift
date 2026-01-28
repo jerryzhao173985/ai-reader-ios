@@ -230,6 +230,14 @@ final class SettingsManager {
         }
     }
 
+    /// When true, enables web search tool for GPT-5.2 Responses API
+    /// Allows the model to search the web for current information relevant to the selected text
+    var webSearchEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(webSearchEnabled, forKey: Keys.webSearchEnabled)
+        }
+    }
+
     // MARK: - Keys
     private enum Keys {
         static let theme = "settings.theme"
@@ -241,6 +249,7 @@ final class SettingsManager {
         static let aiProvider = "settings.aiProvider"
         static let aiAutoFallback = "settings.aiAutoFallback"
         static let reasoningEffort = "settings.reasoningEffort"
+        static let webSearchEnabled = "settings.webSearchEnabled"
     }
 
     // MARK: - Computed Properties
@@ -299,6 +308,13 @@ final class SettingsManager {
             self.reasoningEffort = savedEffort
         } else {
             self.reasoningEffort = .xhigh  // Best quality default
+        }
+
+        // Load web search setting (default false - opt-in feature)
+        if defaults.object(forKey: Keys.webSearchEnabled) != nil {
+            self.webSearchEnabled = defaults.bool(forKey: Keys.webSearchEnabled)
+        } else {
+            self.webSearchEnabled = false  // Off by default
         }
     }
 

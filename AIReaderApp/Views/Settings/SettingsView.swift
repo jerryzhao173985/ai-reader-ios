@@ -34,11 +34,12 @@ struct SettingsView: View {
                     apiKeyField
                     aiProviderPicker
                     reasoningEffortPicker
+                    webSearchToggle
                     aiAutoFallbackToggle
                 } header: {
                     Text("AI Settings")
                 } footer: {
-                    Text("Your API key is stored locally and never shared. GPT-5.2 uses the new Responses API with advanced reasoning. GPT-4o is the proven stable option.")
+                    Text("Your API key is stored locally and never shared. GPT-5.2 uses the new Responses API with advanced reasoning and optional web search. GPT-4o is the proven stable option.")
                 }
 
                 // Reset Section
@@ -281,6 +282,34 @@ struct SettingsView: View {
             Text(settings.aiProvider.description)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Web Search Toggle
+    @MainActor
+    private var webSearchToggle: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { settings.webSearchEnabled },
+                set: { settings.webSearchEnabled = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Web Search")
+                    Text("Search for relevant current information")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if settings.webSearchEnabled && settings.aiProvider != .gpt5_2 {
+                HStack {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.orange)
+                    Text("Web search only available with GPT-5.2")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
         }
     }
 

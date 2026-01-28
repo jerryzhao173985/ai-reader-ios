@@ -12,6 +12,7 @@ struct AIConfiguration {
     var baseURL: String
     var provider: SettingsManager.AIProvider
     var reasoningEffort: String  // For GPT-5.2: none|low|medium|high|xhigh
+    var webSearchEnabled: Bool   // For GPT-5.2: enable web search tool
     var temperature: Double?
     var maxOutputTokens: Int
     var timeoutSeconds: TimeInterval
@@ -47,11 +48,20 @@ struct AIConfiguration {
         let effortValue = defaults.string(forKey: "settings.reasoningEffort") ?? "xhigh"
         let reasoningEffort = SettingsManager.ReasoningEffort(rawValue: effortValue) ?? .xhigh
 
+        // Load web search setting (default false)
+        let webSearchEnabled: Bool
+        if defaults.object(forKey: "settings.webSearchEnabled") != nil {
+            webSearchEnabled = defaults.bool(forKey: "settings.webSearchEnabled")
+        } else {
+            webSearchEnabled = false
+        }
+
         return AIConfiguration(
             apiKey: apiKey,
             baseURL: "https://api.openai.com/v1",
             provider: provider,
             reasoningEffort: reasoningEffort.rawValue,
+            webSearchEnabled: webSearchEnabled,
             temperature: nil,
             maxOutputTokens: 16000,
             timeoutSeconds: 180,
@@ -63,10 +73,12 @@ struct AIConfiguration {
     }
 
     /// Create a fallback configuration using GPT-4o
+    /// Disables web search since Chat Completions API doesn't support tools
     func withFallback() -> AIConfiguration {
         var fallback = self
         fallback.provider = .gpt4o
         fallback.autoFallback = false  // Don't chain fallbacks
+        fallback.webSearchEnabled = false  // GPT-4o doesn't support web search
         return fallback
     }
 }
@@ -110,6 +122,19 @@ final class AIService {
         sessionConfig.timeoutIntervalForRequest = configuration.timeoutSeconds
         sessionConfig.timeoutIntervalForResource = configuration.timeoutSeconds * 2
         self.session = URLSession(configuration: sessionConfig)
+    }
+
+    /// Read web search setting live from UserDefaults
+    /// This ensures we always use the current setting, even if it changed after AIService was created
+    /// Important: This must match the key used in SettingsManager.Keys.webSearchEnabled
+    private var isWebSearchEnabledLive: Bool {
+        let defaults = UserDefaults.standard
+        // Only check for GPT-5.2 since web search requires Responses API
+        guard config.provider == .gpt5_2 else { return false }
+        if defaults.object(forKey: "settings.webSearchEnabled") != nil {
+            return defaults.bool(forKey: "settings.webSearchEnabled")
+        }
+        return false
     }
 
     // MARK: - Public API
@@ -386,6 +411,29 @@ final class AIService {
                     "effort": config.reasoningEffort
                 ]
 
+                // Add web search tool if enabled (read live from UserDefaults)
+                // This allows the model to search the web for up-to-date information
+                // relevant to the selected text, concepts, claims, and references
+                // Using isWebSearchEnabledLive ensures we pick up setting changes mid-session
+                if isWebSearchEnabledLive {
+                    body["tools"] = [
+                        [
+                            "type": "web_search",
+                            "search_context_size": "high"  // Maximum context for best results
+                        ]
+                    ]
+                    // Request source information to be included in streaming response
+                    // SSE events will contain response.web_search_call.* for status
+                    // and sources will be available in the output items
+                    body["include"] = [
+                        "web_search_call.action.sources",
+                        "web_search_call.results"
+                    ]
+                    #if DEBUG
+                    print("[AIService] Web search enabled with include[sources,results] for this request")
+                    #endif
+                }
+
                 if let temp = config.temperature {
                     body["temperature"] = temp
                 }
@@ -433,7 +481,8 @@ final class AIService {
                     }
 
                     // Parse SSE stream for Responses API
-                    // Events: response.output_text.delta, response.output_text.done, etc.
+                    // Events: response.output_text.delta, response.output_text.done,
+                    // response.web_search_call.* (when web search is enabled), etc.
                     for try await line in bytes.lines {
                         if line.hasPrefix("data: ") {
                             let jsonString = String(line.dropFirst(6))
@@ -459,6 +508,35 @@ final class AIService {
                                         continuation.yield(text)
                                     }
                                 }
+                                #if DEBUG
+                                // Log web search events for debugging and transparency
+                                // SSE events: response.web_search_call.in_progress, .searching, .completed
+                                // With include[] parameter, we also get sources and results data
+                                if eventType.hasPrefix("response.web_search_call") {
+                                    print("[AIService] 🔍 Web search event: \(eventType)")
+
+                                    // Log search queries if available
+                                    if let queries = json["queries"] as? [String] {
+                                        print("[AIService] 🔍 Search queries: \(queries)")
+                                    }
+
+                                    // Log search status details if available
+                                    if let status = json["status"] as? String {
+                                        print("[AIService] 🔍 Search status: \(status)")
+                                    }
+
+                                    // Log sources if available (from action.sources)
+                                    if let action = json["action"] as? [String: Any],
+                                       let sources = action["sources"] as? [[String: Any]] {
+                                        print("[AIService] 🔍 Sources: \(sources.count) consulted")
+                                    }
+
+                                    // Log results count if available (from results)
+                                    if let results = json["results"] as? [[String: Any]] {
+                                        print("[AIService] 🔍 Results: \(results.count) returned")
+                                    }
+                                }
+                                #endif
                             }
                         }
                     }
@@ -609,6 +687,25 @@ final class AIService {
         body["reasoning"] = [
             "effort": config.reasoningEffort
         ]
+
+        // Add web search tool if enabled (read live from UserDefaults)
+        // Using search_context_size "high" for maximum context from search results
+        // Using isWebSearchEnabledLive ensures we pick up setting changes mid-session
+        if isWebSearchEnabledLive {
+            body["tools"] = [
+                [
+                    "type": "web_search",
+                    "search_context_size": "high"
+                ]
+            ]
+            // Request detailed search information in the response:
+            // - action.sources: URLs of websites consulted for transparency
+            // - results: Full search results data for richer context
+            body["include"] = [
+                "web_search_call.action.sources",
+                "web_search_call.results"
+            ]
+        }
 
         if let temp = config.temperature {
             body["temperature"] = temp
@@ -766,6 +863,7 @@ final class AIService {
 
     /// Parse Responses API response
     /// Response structure: { output: [{ type: "message", content: [{ type: "output_text", text: "..." }] }] }
+    /// When include: ["web_search_call.action.sources"] is set, web search sources are also included
     private func parseResponsesAPIResponse(data: Data) throws -> String {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw AIError.invalidResponse
@@ -789,6 +887,43 @@ final class AIService {
         // Collect all text from output items
         var resultText = ""
         for item in output {
+            let itemType = item["type"] as? String
+
+            #if DEBUG
+            // Log web search calls if present (when include parameter was used)
+            // With include: ["web_search_call.action.sources", "web_search_call.results"]
+            // we get both source URLs and full search results
+            if itemType == "web_search_call" {
+                print("[AIService] 🔍 Web search was performed")
+
+                // Log sources from action.sources
+                if let action = item["action"] as? [String: Any],
+                   let sources = action["sources"] as? [[String: Any]] {
+                    print("[AIService] 🔍 Sources consulted: \(sources.count)")
+                    for source in sources.prefix(3) {
+                        if let url = source["url"] as? String,
+                           let title = source["title"] as? String {
+                            print("[AIService]    - \(title): \(url)")
+                        }
+                    }
+                }
+
+                // Log results from web_search_call.results if present
+                if let results = item["results"] as? [[String: Any]] {
+                    print("[AIService] 🔍 Search results returned: \(results.count)")
+                    for result in results.prefix(3) {
+                        if let title = result["title"] as? String {
+                            let snippet = (result["snippet"] as? String)?.prefix(80) ?? ""
+                            print("[AIService]    Result: \(title)")
+                            if !snippet.isEmpty {
+                                print("[AIService]      \(snippet)...")
+                            }
+                        }
+                    }
+                }
+            }
+            #endif
+
             // Each output item can have content array
             if let content = item["content"] as? [[String: Any]] {
                 for part in content {
@@ -939,6 +1074,143 @@ final class AnalysisJobManager {
         }
     }
 
+    /// Check if web search is enabled from UserDefaults
+    private var isWebSearchEnabled: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "settings.webSearchEnabled") != nil {
+            return defaults.bool(forKey: "settings.webSearchEnabled")
+        }
+        return false
+    }
+
+    /// Get web search guidance specific to each analysis type
+    /// These instructions ensure searches target SPECIFIC content from the selected text,
+    /// focusing on exact phrases, terminology, and deeper meanings - NOT general book info
+    private func webSearchGuidance(for type: AnalysisType) -> String {
+        switch type {
+        case .factCheck:
+            return """
+
+            **Web Search Available - Use Strategically:**
+            Search for EXACT PHRASES and specific terms from the selected text:
+            - Use quotation marks: "exact phrase from text" + definition OR meaning OR context
+            - Search verbatim: specific names, dates, statistics, technical terms as they appear
+            - Verify claims: historical events, scientific findings, data points mentioned
+            - Find original sources: if a study or reference is cited, search for the primary source
+
+            Search Query Examples:
+            - Good: "adaptive unconscious" psychology definition
+            - Good: "availability heuristic" Kahneman research
+            - Bad: Thinking Fast and Slow book summary
+            - Bad: Daniel Kahneman biography
+
+            Focus on the SPECIFIC CONTENT in the selection - what terms mean, whether claims are accurate.
+            """
+
+        case .discussion:
+            return """
+
+            **Web Search Available - Use Strategically:**
+            Search for DEEPER MEANING of specific phrases, concepts, and ideas in the selection:
+            - Use quotation marks: "exact phrase" + philosophical analysis OR academic interpretation
+            - Search etymology: origin and evolution of specific terms used
+            - Find scholarly perspectives: how academics discuss these exact concepts
+            - Explore intellectual history: where these ideas originated and developed
+
+            Search Query Examples:
+            - Good: "system 1 and system 2" cognitive psychology theory
+            - Good: "bounded rationality" Herbert Simon original meaning
+            - Good: "the map is not the territory" Korzybski philosophy
+            - Bad: best books about decision making
+            - Bad: what is behavioral economics about
+
+            Search for what the EXACT WORDS mean and their intellectual context, not general book themes.
+            If the passage uses specialized vocabulary, include the relevant domain (psychology, philosophy, etc.).
+            """
+
+        case .keyPoints:
+            return """
+
+            **Web Search Available - Use Strategically:**
+            Search only when a key point contains terms or concepts needing clarification:
+            - Define technical terms: "term from text" + definition in context
+            - Clarify references: specific studies, experiments, or examples mentioned
+            - Verify findings: particular claims, statistics, or research results cited
+            - Explain jargon: specialized vocabulary in its proper domain context
+
+            Search Query Examples:
+            - Good: "priming effect" psychology experiments
+            - Good: "anchoring bias" Tversky Kahneman 1974 study
+            - Bad: cognitive bias overview
+            - Bad: psychology research methods
+
+            Search for definitions and context of SPECIFIC terms used in key points, not general topics.
+            """
+
+        case .argumentMap:
+            return """
+
+            **Web Search Available - Use Strategically:**
+            Search to validate and trace SPECIFIC evidence and claims in the argument:
+            - Find original sources: if studies or data are cited, locate the primary research
+            - Verify premises: check whether specific factual claims are accurate and current
+            - Check for updates: has the cited evidence been replicated, revised, or contested?
+            - Clarify logic: definitions of reasoning patterns or logical frameworks mentioned
+
+            Search Query Examples:
+            - Good: "Linda problem" conjunction fallacy Tversky Kahneman 1983
+            - Good: "prospect theory" Nobel Prize research findings
+            - Good: "replication crisis" psychology specific study mentioned
+            - Bad: logical fallacies list
+            - Bad: how to analyze arguments
+
+            Search for the SPECIFIC evidence, studies, and citations in the argument - not general critiques.
+            """
+
+        case .counterpoints:
+            return """
+
+            **Web Search Available - Use Strategically:**
+            Search for intellectual challenges to the SPECIFIC claims in the selection:
+            - Find counterarguments: "exact claim from text" + criticism OR counterargument
+            - Search for rebuttals: specific studies or evidence that contradict the claims
+            - Alternative interpretations: how other scholars interpret the same concepts
+            - Updated findings: research that challenges or refines the original claims
+
+            Search Query Examples:
+            - Good: "heuristics and biases" Gigerenzer criticism
+            - Good: "dual process theory" alternative models challenges
+            - Good: "loss aversion" replication failures recent research
+            - Bad: is Kahneman right or wrong
+            - Bad: problems with behavioral economics
+
+            Search for SUBSTANTIVE challenges to what's IN the selection, using the exact phrasing.
+            """
+
+        case .customQuestion:
+            return """
+
+            **Web Search Available - Use Strategically:**
+            Search based on the user's question combined with SPECIFIC content from the selection:
+            - Answer factual questions: search for exact terms or claims the user asks about
+            - Clarify meaning: if the question asks "what does X mean," search for that exact phrase
+            - Find connections: relate specific phrases from the text to the user's question
+            - Get current info: if the question requires up-to-date data, search for recent sources
+
+            Search Query Examples:
+            - Good: [key phrase from selection] + [term from user's question]
+            - Good: "exact quote user asks about" + explanation
+            - Bad: general search unrelated to the selected text
+            - Bad: book summary or author information (unless explicitly asked)
+
+            Combine the user's question with EXACT phrases from the selected text in your searches.
+            """
+
+        case .comment:
+            return ""  // Comments don't use AI
+        }
+    }
+
     private func buildPrompt(
         type: AnalysisType,
         text: String,
@@ -948,6 +1220,8 @@ final class AnalysisJobManager {
         history: [(question: String, answer: String)],
         priorAnalysisContext: (type: AnalysisType, result: String)? = nil
     ) -> String {
+        let webGuidance = isWebSearchEnabled ? webSearchGuidance(for: type) : ""
+
         switch type {
         case .factCheck:
             return """
@@ -967,6 +1241,7 @@ final class AnalysisJobManager {
             4. Add any relevant historical or contemporary context
 
             Keep your response focused and educational. Use bullet points for multiple facts.
+            \(webGuidance)
             """
 
         case .discussion:
@@ -1000,6 +1275,7 @@ final class AnalysisJobManager {
                Pose 2-3 thought-provoking questions that could deepen understanding
 
             Write in an engaging, scholarly tone that invites further exploration.
+            \(webGuidance)
             """
 
         case .keyPoints:
@@ -1022,6 +1298,7 @@ final class AnalysisJobManager {
             - Include any crucial evidence or examples mentioned
 
             Format as a numbered list for easy reference.
+            \(webGuidance)
             """
 
         case .argumentMap:
@@ -1057,6 +1334,7 @@ final class AnalysisJobManager {
                Where might the argument be challenged?
 
             Use clear formatting with headers and bullet points.
+            \(webGuidance)
             """
 
         case .counterpoints:
@@ -1085,6 +1363,7 @@ final class AnalysisJobManager {
             - Historical or cultural perspectives
 
             Be fair and intellectually honest in your critiques.
+            \(webGuidance)
             """
 
         case .customQuestion:
@@ -1111,7 +1390,7 @@ final class AnalysisJobManager {
             // This enables context-aware follow-ups like: "The fact check mentioned X - tell me more about Y"
             // For comments: the "result" is actually the user's comment text (not AI-generated)
             if let prior = priorAnalysisContext {
-                if prior.type == .comment {
+                if prior.type == AnalysisType.comment {
                     prompt += """
 
                 **User's Previous Comment:**
@@ -1155,6 +1434,7 @@ final class AnalysisJobManager {
             - The conversation history (if any)
 
             Be thorough but concise. Use examples when helpful.
+            \(webGuidance)
             """
 
             return prompt
