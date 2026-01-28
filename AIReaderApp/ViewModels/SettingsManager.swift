@@ -7,6 +7,81 @@ import SwiftUI
 
 @Observable
 final class SettingsManager {
+    // MARK: - AI Provider
+    /// AI model provider selection
+    /// GPT-5.2 uses the new Responses API, GPT-4o uses Chat Completions API
+    enum AIProvider: String, CaseIterable, Identifiable {
+        case gpt5_2 = "gpt-5.2"
+        case gpt4o = "gpt-4o"
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .gpt5_2: return "GPT-5.2 (Latest)"
+            case .gpt4o: return "GPT-4o (Stable)"
+            }
+        }
+
+        var modelId: String { rawValue }
+
+        /// Which API endpoint to use
+        var apiEndpoint: String {
+            switch self {
+            case .gpt5_2: return "/responses"
+            case .gpt4o: return "/chat/completions"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .gpt5_2: return "Newest model with Responses API, advanced reasoning"
+            case .gpt4o: return "Proven model with Chat Completions API"
+            }
+        }
+
+        /// Whether this provider supports reasoning effort configuration
+        var supportsReasoningEffort: Bool {
+            switch self {
+            case .gpt5_2: return true
+            case .gpt4o: return false
+            }
+        }
+    }
+
+    // MARK: - Reasoning Effort
+    /// Controls how much reasoning the model performs before responding
+    /// Only applicable to GPT-5.2 (Responses API)
+    enum ReasoningEffort: String, CaseIterable, Identifiable {
+        case none = "none"
+        case low = "low"
+        case medium = "medium"
+        case high = "high"
+        case xhigh = "xhigh"
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .none: return "None (Fastest)"
+            case .low: return "Low"
+            case .medium: return "Medium"
+            case .high: return "High"
+            case .xhigh: return "Extra High (Best)"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .none: return "Minimal reasoning, fastest responses"
+            case .low: return "Light reasoning for simple tasks"
+            case .medium: return "Balanced speed and reasoning depth"
+            case .high: return "Thorough reasoning for complex tasks"
+            case .xhigh: return "Maximum reasoning depth, best quality"
+            }
+        }
+    }
+
     // MARK: - Theme
     enum Theme: String, CaseIterable, Identifiable {
         case light
@@ -134,6 +209,27 @@ final class SettingsManager {
         }
     }
 
+    var aiProvider: AIProvider {
+        didSet {
+            UserDefaults.standard.set(aiProvider.rawValue, forKey: Keys.aiProvider)
+        }
+    }
+
+    /// When true, automatically falls back to GPT-4o if GPT-5.2 fails
+    var aiAutoFallback: Bool {
+        didSet {
+            UserDefaults.standard.set(aiAutoFallback, forKey: Keys.aiAutoFallback)
+        }
+    }
+
+    /// Reasoning effort for GPT-5.2 (controls reasoning depth)
+    /// Default: xhigh for best quality analysis
+    var reasoningEffort: ReasoningEffort {
+        didSet {
+            UserDefaults.standard.set(reasoningEffort.rawValue, forKey: Keys.reasoningEffort)
+        }
+    }
+
     // MARK: - Keys
     private enum Keys {
         static let theme = "settings.theme"
@@ -142,6 +238,9 @@ final class SettingsManager {
         static let lineSpacing = "settings.lineSpacing"
         static let marginSize = "settings.marginSize"
         static let apiKey = "settings.apiKey"
+        static let aiProvider = "settings.aiProvider"
+        static let aiAutoFallback = "settings.aiAutoFallback"
+        static let reasoningEffort = "settings.reasoningEffort"
     }
 
     // MARK: - Computed Properties
@@ -178,6 +277,29 @@ final class SettingsManager {
         self.marginSize = savedMarginSize > 0 ? savedMarginSize : 20
 
         self.openAIAPIKey = defaults.string(forKey: Keys.apiKey) ?? ""
+
+        // Load AI provider (default to GPT-4o for stability during development)
+        if let providerValue = defaults.string(forKey: Keys.aiProvider),
+           let savedProvider = AIProvider(rawValue: providerValue) {
+            self.aiProvider = savedProvider
+        } else {
+            self.aiProvider = .gpt4o  // Safe default
+        }
+
+        // Load auto-fallback setting (default true for resilience)
+        if defaults.object(forKey: Keys.aiAutoFallback) != nil {
+            self.aiAutoFallback = defaults.bool(forKey: Keys.aiAutoFallback)
+        } else {
+            self.aiAutoFallback = true
+        }
+
+        // Load reasoning effort (default to xhigh for best quality)
+        if let effortValue = defaults.string(forKey: Keys.reasoningEffort),
+           let savedEffort = ReasoningEffort(rawValue: effortValue) {
+            self.reasoningEffort = savedEffort
+        } else {
+            self.reasoningEffort = .xhigh  // Best quality default
+        }
     }
 
     // MARK: - Reset

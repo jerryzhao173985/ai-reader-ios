@@ -32,10 +32,13 @@ struct SettingsView: View {
                 // AI Settings Section
                 Section {
                     apiKeyField
+                    aiProviderPicker
+                    reasoningEffortPicker
+                    aiAutoFallbackToggle
                 } header: {
                     Text("AI Settings")
                 } footer: {
-                    Text("Your API key is stored locally and never shared. It's used for AI-powered text analysis.")
+                    Text("Your API key is stored locally and never shared. GPT-5.2 uses the new Responses API with advanced reasoning. GPT-4o is the proven stable option.")
                 }
 
                 // Reset Section
@@ -254,6 +257,74 @@ struct SettingsView: View {
                     Text("API Key configured")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - AI Provider Picker
+    @MainActor
+    private var aiProviderPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("AI Model", selection: Binding(
+                get: { settings.aiProvider },
+                set: { settings.aiProvider = $0 }
+            )) {
+                ForEach(SettingsManager.AIProvider.allCases) { provider in
+                    VStack(alignment: .leading) {
+                        Text(provider.displayName)
+                    }
+                    .tag(provider)
+                }
+            }
+
+            Text(settings.aiProvider.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Auto Fallback Toggle
+    @MainActor
+    private var aiAutoFallbackToggle: some View {
+        Toggle(isOn: Binding(
+            get: { settings.aiAutoFallback },
+            set: { settings.aiAutoFallback = $0 }
+        )) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Auto-Fallback")
+                Text("Use GPT-4o if selected model fails")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Reasoning Effort Picker
+    @MainActor
+    private var reasoningEffortPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Reasoning Effort", selection: Binding(
+                get: { settings.reasoningEffort },
+                set: { settings.reasoningEffort = $0 }
+            )) {
+                ForEach(SettingsManager.ReasoningEffort.allCases) { effort in
+                    Text(effort.displayName)
+                        .tag(effort)
+                }
+            }
+
+            Text(settings.reasoningEffort.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !settings.aiProvider.supportsReasoningEffort {
+                HStack {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.orange)
+                    Text("Reasoning effort only applies to GPT-5.2")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
         }

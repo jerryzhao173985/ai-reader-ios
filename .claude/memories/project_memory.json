@@ -7,13 +7,13 @@
     },
     {
       "type": "completed_feature",
-      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library (book context menu: Highlights/Delete), TOC, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions, comments), inline markers [1][2][3], delete highlight + undo, delete individual analysis (X button), haptic feedback, brain icon chapter highlights list, cross-chapter analysis persistence, analysis count badges. HighlightsView: accessible via Library long-press, exports (Markdown/JSON/Clipboard), in-place analysis expansion via HighlightDetailSheet. Comment feature: user notes without AI call, follow-ups work normally. HighlightAnalysisManager enables standalone analysis ops outside reader context. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
-      "added_at": "2026-01-27T14:55:00.000000"
+      "content": "AIReaderApp: iOS EPUB reader with SwiftUI, SwiftData, WKWebView. Features: Library (book context menu: Highlights/Delete), TOC, reading progress, text highlights with AI analysis (fact-check, discussion, key points, argument map, counterpoints, custom questions, comments), inline markers [1][2][3], delete highlight + undo, delete individual analysis (X button), haptic feedback, brain icon chapter highlights list, cross-chapter analysis persistence, analysis count badges. HighlightsView: accessible via Library long-press, exports (Markdown/JSON/Clipboard), in-place analysis expansion via HighlightDetailSheet. Comment feature: user notes without AI call, follow-ups work normally. HighlightAnalysisManager enables standalone analysis ops outside reader context. AI: Dual-API support - GPT-5.2 (Responses API with configurable reasoning effort: none/low/medium/high/xhigh, default xhigh) and GPT-4o (Chat Completions API) with auto-fallback. Settings UI for model selection and reasoning effort. GitHub: https://github.com/jerryzhao173985/ai-reader-ios",
+      "added_at": "2026-01-28T10:00:00.000000"
     },
     {
       "type": "technical",
-      "content": "Architecture: book.highlights = ALL (book-scoped), currentChapterHighlights = filtered for chapter. AIAnalysisModel.prompt/response = initial Q&A; thread.turns = follow-ups. For comments: prompt = user's text, response = '' (empty). BOTH AnalysisPanelView (previousAnalysisCard) and HighlightsView (AnalysisCard) must show prompt for comments in card previews. WKWebView: JS injection for marker/color updates (not loadHTMLString). ChapterContentView state: 3-field tuple (highlightId, colorHex, analysisCount) for dedup. Chapter-change cleanup clears pendingMarkerUpdate and pendingUndoRestore. Parallel analysis is SAFE: saveAnalysis() writes to SwiftData immediately. Two analysis viewing contexts: (1) AnalysisPanelView in reader (active reading), (2) HighlightDetailSheet in HighlightsView (review mode, uses HighlightAnalysisManager).",
-      "added_at": "2026-01-27T22:40:00.000000"
+      "content": "Architecture: book.highlights = ALL (book-scoped), currentChapterHighlights = filtered for chapter. AIAnalysisModel.prompt/response = initial Q&A; thread.turns = follow-ups. For comments: prompt = user's text, response = '' (empty). BOTH AnalysisPanelView (previousAnalysisCard) and HighlightsView (AnalysisCard) must show prompt for comments in card previews. WKWebView: JS injection for marker/color updates (not loadHTMLString). ChapterContentView state: 3-field tuple (highlightId, colorHex, analysisCount) for dedup. Chapter-change cleanup clears pendingMarkerUpdate and pendingUndoRestore. Parallel analysis is SAFE: saveAnalysis() writes to SwiftData immediately. Two analysis viewing contexts: (1) AnalysisPanelView in reader (active reading), (2) HighlightDetailSheet in HighlightsView (review mode, uses HighlightAnalysisManager). AI API: GPT-5.2 uses /v1/responses with input+max_output_tokens+reasoning.effort; GPT-4o uses /v1/chat/completions with messages+max_tokens. Streaming: Responses API emits response.output_text.delta, Chat Completions emits choices[0].delta.content.",
+      "added_at": "2026-01-28T10:00:00.000000"
     },
     {
       "type": "decision",
@@ -34,5 +34,5 @@
   "manual_memories": [],
   "realtime_memories": [],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-27T22:40:00.000000"
+  "updated_at": "2026-01-28T10:00:00.000000"
 }

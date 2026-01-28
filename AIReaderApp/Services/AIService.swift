@@ -10,33 +10,64 @@ import Foundation
 struct AIConfiguration {
     var apiKey: String
     var baseURL: String
-    var model: String
-    var reasoningEffort: String
+    var provider: SettingsManager.AIProvider
+    var reasoningEffort: String  // For GPT-5.2: none|low|medium|high|xhigh
     var temperature: Double?
     var maxOutputTokens: Int
     var timeoutSeconds: TimeInterval
     var maxInputChars: Int
     var contextMaxChars: Int
     var chapterContextMaxChars: Int
+    var autoFallback: Bool  // If true, fall back to GPT-4o on GPT-5.2 failure
+
+    /// Model ID based on provider
+    var model: String { provider.modelId }
+
+    /// Full endpoint URL based on provider
+    var endpoint: String { "\(baseURL)\(provider.apiEndpoint)" }
 
     static var `default`: AIConfiguration {
-        // Read API key from UserDefaults (where SettingsManager stores it)
-        // This works on physical iOS devices, unlike environment variables
+        // Read settings from UserDefaults (where SettingsManager stores them)
         let defaults = UserDefaults.standard
         let apiKey = defaults.string(forKey: "settings.apiKey") ?? ""
+
+        // Load provider setting
+        let providerValue = defaults.string(forKey: "settings.aiProvider") ?? "gpt-4o"
+        let provider = SettingsManager.AIProvider(rawValue: providerValue) ?? .gpt4o
+
+        // Load auto-fallback setting
+        let autoFallback: Bool
+        if defaults.object(forKey: "settings.aiAutoFallback") != nil {
+            autoFallback = defaults.bool(forKey: "settings.aiAutoFallback")
+        } else {
+            autoFallback = true
+        }
+
+        // Load reasoning effort (default xhigh for best quality)
+        let effortValue = defaults.string(forKey: "settings.reasoningEffort") ?? "xhigh"
+        let reasoningEffort = SettingsManager.ReasoningEffort(rawValue: effortValue) ?? .xhigh
 
         return AIConfiguration(
             apiKey: apiKey,
             baseURL: "https://api.openai.com/v1",
-            model: "gpt-4o",
-            reasoningEffort: "high",
+            provider: provider,
+            reasoningEffort: reasoningEffort.rawValue,
             temperature: nil,
             maxOutputTokens: 16000,
             timeoutSeconds: 180,
             maxInputChars: 400000,
             contextMaxChars: 8000,
-            chapterContextMaxChars: 100000
+            chapterContextMaxChars: 100000,
+            autoFallback: autoFallback
         )
+    }
+
+    /// Create a fallback configuration using GPT-4o
+    func withFallback() -> AIConfiguration {
+        var fallback = self
+        fallback.provider = .gpt4o
+        fallback.autoFallback = false  // Don't chain fallbacks
+        return fallback
     }
 }
 
@@ -307,7 +338,20 @@ final class AIService {
     // MARK: - Private Implementation
 
     /// Call OpenAI with streaming, yielding partial responses as they arrive
+    /// Automatically selects the appropriate API based on provider configuration
     func callOpenAIStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
+        switch config.provider {
+        case .gpt5_2:
+            return callResponsesAPIStreaming(prompt: prompt)
+        case .gpt4o:
+            return callChatCompletionsStreaming(prompt: prompt)
+        }
+    }
+
+    // MARK: - Responses API (GPT-5.2)
+
+    /// Stream using the new OpenAI Responses API for GPT-5.2
+    private func callResponsesAPIStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 guard !config.apiKey.isEmpty else {
@@ -315,12 +359,9 @@ final class AIService {
                     return
                 }
 
-                // Trim prompt if too long
                 let trimmedPrompt = String(prompt.prefix(config.maxInputChars))
 
-                // Build request
-                let endpoint = "\(config.baseURL)/chat/completions"
-                guard let url = URL(string: endpoint) else {
+                guard let url = URL(string: config.endpoint) else {
                     continuation.finish(throwing: AIError.invalidResponse)
                     return
                 }
@@ -330,7 +371,151 @@ final class AIService {
                 request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                // Build request body with streaming enabled
+                // Build Responses API request body
+                // See: https://platform.openai.com/docs/api-reference/responses
+                var body: [String: Any] = [
+                    "model": config.model,
+                    "input": trimmedPrompt,
+                    "max_output_tokens": config.maxOutputTokens,
+                    "stream": true
+                ]
+
+                // Add reasoning configuration for GPT-5.2
+                // Note: summary parameter requires organization verification, so we omit it
+                body["reasoning"] = [
+                    "effort": config.reasoningEffort
+                ]
+
+                if let temp = config.temperature {
+                    body["temperature"] = temp
+                }
+
+                do {
+                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+                    #if DEBUG
+                    print("[AIService] Responses API request to \(config.endpoint) with model \(config.model)")
+                    #endif
+
+                    let (bytes, response) = try await session.bytes(for: request)
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        continuation.finish(throwing: AIError.invalidResponse)
+                        return
+                    }
+
+                    // Check for non-200 response
+                    if httpResponse.statusCode != 200 {
+                        // Try to read error body
+                        var errorBody = ""
+                        for try await line in bytes.lines {
+                            errorBody += line
+                        }
+                        #if DEBUG
+                        print("[AIService] Responses API error: HTTP \(httpResponse.statusCode) - \(errorBody)")
+                        #endif
+
+                        // Attempt fallback if enabled
+                        if config.autoFallback {
+                            #if DEBUG
+                            print("[AIService] Falling back to GPT-4o...")
+                            #endif
+                            let fallbackService = AIService(configuration: config.withFallback())
+                            for try await chunk in fallbackService.callOpenAIStreaming(prompt: prompt) {
+                                continuation.yield(chunk)
+                            }
+                            continuation.finish()
+                            return
+                        }
+
+                        continuation.finish(throwing: AIError.apiError("HTTP \(httpResponse.statusCode): \(errorBody.prefix(200))"))
+                        return
+                    }
+
+                    // Parse SSE stream for Responses API
+                    // Events: response.output_text.delta, response.output_text.done, etc.
+                    for try await line in bytes.lines {
+                        if line.hasPrefix("data: ") {
+                            let jsonString = String(line.dropFirst(6))
+
+                            if jsonString == "[DONE]" {
+                                break
+                            }
+
+                            if let data = jsonString.data(using: .utf8),
+                               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                               let eventType = json["type"] as? String {
+
+                                // Handle text delta events
+                                if eventType == "response.output_text.delta" {
+                                    if let delta = json["delta"] as? String {
+                                        continuation.yield(delta)
+                                    }
+                                }
+                                // Also check for content_part deltas (alternate format)
+                                else if eventType == "response.content_part.delta" {
+                                    if let delta = json["delta"] as? [String: Any],
+                                       let text = delta["text"] as? String {
+                                        continuation.yield(text)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    continuation.finish()
+                } catch {
+                    #if DEBUG
+                    print("[AIService] Responses API stream error: \(error)")
+                    #endif
+
+                    // Attempt fallback on error if enabled
+                    if config.autoFallback {
+                        #if DEBUG
+                        print("[AIService] Falling back to GPT-4o after error...")
+                        #endif
+                        do {
+                            let fallbackService = AIService(configuration: config.withFallback())
+                            for try await chunk in fallbackService.callOpenAIStreaming(prompt: prompt) {
+                                continuation.yield(chunk)
+                            }
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                        return
+                    }
+
+                    continuation.finish(throwing: AIError.networkError(error))
+                }
+            }
+        }
+    }
+
+    // MARK: - Chat Completions API (GPT-4o)
+
+    /// Stream using the Chat Completions API for GPT-4o (proven stable fallback)
+    private func callChatCompletionsStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                guard !config.apiKey.isEmpty else {
+                    continuation.finish(throwing: AIError.noAPIKey)
+                    return
+                }
+
+                let trimmedPrompt = String(prompt.prefix(config.maxInputChars))
+
+                guard let url = URL(string: config.endpoint) else {
+                    continuation.finish(throwing: AIError.invalidResponse)
+                    return
+                }
+
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+                // Build Chat Completions API request body
                 var body: [String: Any] = [
                     "model": config.model,
                     "messages": [
@@ -347,6 +532,10 @@ final class AIService {
                 do {
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+                    #if DEBUG
+                    print("[AIService] Chat Completions request to \(config.endpoint) with model \(config.model)")
+                    #endif
+
                     let (bytes, response) = try await session.bytes(for: request)
 
                     guard let httpResponse = response as? HTTPURLResponse,
@@ -355,7 +544,7 @@ final class AIService {
                         return
                     }
 
-                    // Parse SSE stream
+                    // Parse SSE stream for Chat Completions
                     for try await line in bytes.lines {
                         if line.hasPrefix("data: ") {
                             let jsonString = String(line.dropFirst(6))
@@ -383,16 +572,23 @@ final class AIService {
     }
 
     private func callOpenAI(prompt: String) async throws -> String {
+        switch config.provider {
+        case .gpt5_2:
+            return try await callResponsesAPI(prompt: prompt)
+        case .gpt4o:
+            return try await callChatCompletionsAPI(prompt: prompt)
+        }
+    }
+
+    /// Non-streaming Responses API call for GPT-5.2
+    private func callResponsesAPI(prompt: String) async throws -> String {
         guard !config.apiKey.isEmpty else {
             throw AIError.noAPIKey
         }
 
-        // Trim prompt if too long
         let trimmedPrompt = String(prompt.prefix(config.maxInputChars))
 
-        // Build request
-        let endpoint = "\(config.baseURL)/chat/completions"
-        guard let url = URL(string: endpoint) else {
+        guard let url = URL(string: config.endpoint) else {
             throw AIError.invalidResponse
         }
 
@@ -401,7 +597,57 @@ final class AIService {
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Build request body
+        var body: [String: Any] = [
+            "model": config.model,
+            "input": trimmedPrompt,
+            "max_output_tokens": config.maxOutputTokens,
+            "stream": false
+        ]
+
+        // Add reasoning configuration for GPT-5.2
+        // Note: summary parameter requires organization verification, so we omit it
+        body["reasoning"] = [
+            "effort": config.reasoningEffort
+        ]
+
+        if let temp = config.temperature {
+            body["temperature"] = temp
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        do {
+            return try await performResponsesAPIRequest(request: request)
+        } catch {
+            // Attempt fallback if enabled
+            if config.autoFallback {
+                #if DEBUG
+                print("[AIService] Responses API failed, falling back to GPT-4o: \(error)")
+                #endif
+                let fallbackService = AIService(configuration: config.withFallback())
+                return try await fallbackService.callOpenAI(prompt: prompt)
+            }
+            throw error
+        }
+    }
+
+    /// Non-streaming Chat Completions API call for GPT-4o
+    private func callChatCompletionsAPI(prompt: String) async throws -> String {
+        guard !config.apiKey.isEmpty else {
+            throw AIError.noAPIKey
+        }
+
+        let trimmedPrompt = String(prompt.prefix(config.maxInputChars))
+
+        guard let url = URL(string: config.endpoint) else {
+            throw AIError.invalidResponse
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
         var body: [String: Any] = [
             "model": config.model,
             "messages": [
@@ -410,18 +656,18 @@ final class AIService {
             "max_tokens": config.maxOutputTokens
         ]
 
-        // Add temperature if specified
         if let temp = config.temperature {
             body["temperature"] = temp
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        // Make request with retry logic
-        return try await performRequestWithRetry(request: request)
+        return try await performChatCompletionsRequest(request: request)
     }
 
-    private func performRequestWithRetry(request: URLRequest, retries: Int = 3) async throws -> String {
+    // MARK: - Chat Completions Request Handling
+
+    private func performChatCompletionsRequest(request: URLRequest, retries: Int = 3) async throws -> String {
         var lastError: Error?
 
         for attempt in 0..<retries {
@@ -433,14 +679,12 @@ final class AIService {
                 }
 
                 if httpResponse.statusCode == 200 {
-                    return try parseResponse(data: data)
+                    return try parseChatCompletionsResponse(data: data)
                 } else if httpResponse.statusCode == 429 {
-                    // Rate limited - wait and retry
                     let delay = pow(2.0, Double(attempt)) * 1.0
                     try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     continue
                 } else {
-                    // Try to parse error message
                     if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let error = json["error"] as? [String: Any],
                        let message = error["message"] as? String {
@@ -460,7 +704,7 @@ final class AIService {
         throw lastError.map { AIError.networkError($0) } ?? AIError.timeout
     }
 
-    private func parseResponse(data: Data) throws -> String {
+    private func parseChatCompletionsResponse(data: Data) throws -> String {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let firstChoice = choices.first,
@@ -470,6 +714,111 @@ final class AIService {
         }
 
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Responses API Request Handling
+
+    private func performResponsesAPIRequest(request: URLRequest, retries: Int = 3) async throws -> String {
+        var lastError: Error?
+
+        for attempt in 0..<retries {
+            do {
+                let (data, response) = try await session.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw AIError.invalidResponse
+                }
+
+                #if DEBUG
+                print("[AIService] Responses API HTTP \(httpResponse.statusCode)")
+                #endif
+
+                if httpResponse.statusCode == 200 {
+                    return try parseResponsesAPIResponse(data: data)
+                } else if httpResponse.statusCode == 429 {
+                    let delay = pow(2.0, Double(attempt)) * 1.0
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                } else {
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let error = json["error"] as? [String: Any],
+                       let message = error["message"] as? String {
+                        throw AIError.apiError(message)
+                    }
+                    #if DEBUG
+                    if let bodyString = String(data: data, encoding: .utf8) {
+                        print("[AIService] Responses API error body: \(bodyString.prefix(500))")
+                    }
+                    #endif
+                    throw AIError.apiError("HTTP \(httpResponse.statusCode)")
+                }
+            } catch let error as AIError {
+                throw error
+            } catch {
+                lastError = error
+                let delay = pow(2.0, Double(attempt)) * 0.5
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+        }
+
+        throw lastError.map { AIError.networkError($0) } ?? AIError.timeout
+    }
+
+    /// Parse Responses API response
+    /// Response structure: { output: [{ type: "message", content: [{ type: "output_text", text: "..." }] }] }
+    private func parseResponsesAPIResponse(data: Data) throws -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AIError.invalidResponse
+        }
+
+        #if DEBUG
+        print("[AIService] Parsing Responses API response...")
+        #endif
+
+        // Check for error in response
+        if let error = json["error"] as? [String: Any],
+           let message = error["message"] as? String {
+            throw AIError.apiError(message)
+        }
+
+        // Parse output array
+        guard let output = json["output"] as? [[String: Any]] else {
+            throw AIError.invalidResponse
+        }
+
+        // Collect all text from output items
+        var resultText = ""
+        for item in output {
+            // Each output item can have content array
+            if let content = item["content"] as? [[String: Any]] {
+                for part in content {
+                    if part["type"] as? String == "output_text",
+                       let text = part["text"] as? String {
+                        resultText += text
+                    }
+                }
+            }
+            // Or it might be a direct text field
+            else if let text = item["text"] as? String {
+                resultText += text
+            }
+        }
+
+        if resultText.isEmpty {
+            // Try alternate response structure (SDK convenience field)
+            if let outputText = json["output_text"] as? String {
+                resultText = outputText
+            }
+        }
+
+        guard !resultText.isEmpty else {
+            #if DEBUG
+            print("[AIService] Could not parse Responses API output: \(json)")
+            #endif
+            throw AIError.invalidResponse
+        }
+
+        return resultText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
