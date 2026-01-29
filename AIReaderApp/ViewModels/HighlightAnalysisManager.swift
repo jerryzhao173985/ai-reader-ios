@@ -220,7 +220,7 @@ final class HighlightAnalysisManager {
                             // ALWAYS save, regardless of active status
                             // This enables parallel jobs: user can start new question while
                             // previous job completes and saves in background
-                            saveAnalysis(type: type, prompt: question ?? highlight.selectedText, response: result, isActiveJob: isActiveJob)
+                            saveAnalysis(type: type, prompt: question ?? highlight.selectedText, response: result, isActiveJob: isActiveJob, jobId: jobId)
                         }
 
                         // Only clear activeJobId if this is still the tracked job
@@ -293,7 +293,7 @@ final class HighlightAnalysisManager {
                                 // (user deleted it, they don't want the follow-up)
                             } else {
                                 // No analysis was selected - create new custom question analysis
-                                saveAnalysis(type: .customQuestion, prompt: question, response: result, isActiveJob: isActiveJob)
+                                saveAnalysis(type: .customQuestion, prompt: question, response: result, isActiveJob: isActiveJob, jobId: jobId)
                             }
                         }
 
@@ -323,13 +323,15 @@ final class HighlightAnalysisManager {
         }
     }
 
-    private func saveAnalysis(type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true) {
+    private func saveAnalysis(type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true, jobId: UUID) {
+        let job = jobManager.getJob(jobId)
+
         let analysis = AIAnalysisModel(
             analysisType: type,
             prompt: prompt,
             response: response,
-            modelUsed: jobManager.modelId,
-            usedWebSearch: jobManager.isWebSearchEnabled
+            modelUsed: job?.modelId ?? "unknown",
+            usedWebSearch: job?.webSearchEnabled ?? false
         )
 
         analysis.highlight = highlight

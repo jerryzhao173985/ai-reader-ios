@@ -83,6 +83,20 @@ struct AIConfiguration {
     }
 }
 
+/// Events yielded during AI streaming
+/// Used to communicate both content and metadata (like fallback notifications) through the stream
+enum StreamEvent: Sendable {
+    case content(String)
+    case fallbackOccurred(modelId: String, webSearchEnabled: Bool)
+}
+
+/// Result from non-streaming AI calls, includes model tracking info
+private struct NonStreamingResult {
+    let content: String
+    let modelId: String
+    let usedWebSearch: Bool
+}
+
 /// Service for performing AI analysis on text selections
 @Observable
 final class AIService {
@@ -159,7 +173,7 @@ final class AIService {
         Keep your response focused and educational. Use bullet points for multiple facts.
         """
 
-        return try await callOpenAI(prompt: prompt)
+        return try await callOpenAI(prompt: prompt).content
     }
 
     /// Perform deep discussion analysis
@@ -196,7 +210,7 @@ final class AIService {
         Write in an engaging, scholarly tone that invites further exploration.
         """
 
-        return try await callOpenAI(prompt: prompt)
+        return try await callOpenAI(prompt: prompt).content
     }
 
     /// Extract key points
@@ -222,7 +236,7 @@ final class AIService {
         Format as a numbered list for easy reference.
         """
 
-        return try await callOpenAI(prompt: prompt)
+        return try await callOpenAI(prompt: prompt).content
     }
 
     /// Create argument map
@@ -261,7 +275,7 @@ final class AIService {
         Use clear formatting with headers and bullet points.
         """
 
-        return try await callOpenAI(prompt: prompt)
+        return try await callOpenAI(prompt: prompt).content
     }
 
     /// Generate counterpoints
@@ -293,7 +307,7 @@ final class AIService {
         Be fair and intellectually honest in your critiques.
         """
 
-        return try await callOpenAI(prompt: prompt)
+        return try await callOpenAI(prompt: prompt).content
     }
 
     /// Answer custom question with conversation history
@@ -351,7 +365,7 @@ final class AIService {
         Be thorough but concise. Use examples when helpful.
         """
 
-        return try await callOpenAI(prompt: prompt)
+        return try await callOpenAI(prompt: prompt).content
     }
 
     /// Save a comment (no AI processing needed)
@@ -363,7 +377,8 @@ final class AIService {
 
     /// Call OpenAI with streaming, yielding partial responses as they arrive
     /// Automatically selects the appropriate API based on provider configuration
-    func callOpenAIStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
+    /// Returns StreamEvent to communicate both content and metadata (like fallback notifications)
+    func callOpenAIStreaming(prompt: String) -> AsyncThrowingStream<StreamEvent, Error> {
         switch config.provider {
         case .gpt5_2:
             return callResponsesAPIStreaming(prompt: prompt)
@@ -375,7 +390,7 @@ final class AIService {
     // MARK: - Responses API (GPT-5.2)
 
     /// Stream using the new OpenAI Responses API for GPT-5.2
-    private func callResponsesAPIStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
+    private func callResponsesAPIStreaming(prompt: String) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 guard !config.apiKey.isEmpty else {
@@ -465,9 +480,15 @@ final class AIService {
                             #if DEBUG
                             print("[AIService] Falling back to GPT-4o...")
                             #endif
-                            let fallbackService = AIService(configuration: config.withFallback())
-                            for try await chunk in fallbackService.callOpenAIStreaming(prompt: prompt) {
-                                continuation.yield(chunk)
+                            // Notify user of fallback with visible warning
+                            continuation.yield(.content("⚠️ *GPT-5.2 is currently unavailable. Using GPT-4o (web search not available).*\n\n"))
+                            // Notify job manager of fallback for accurate model tracking
+                            let fallbackConfig = config.withFallback()
+                            continuation.yield(.fallbackOccurred(modelId: fallbackConfig.model, webSearchEnabled: fallbackConfig.webSearchEnabled))
+
+                            let fallbackService = AIService(configuration: fallbackConfig)
+                            for try await event in fallbackService.callOpenAIStreaming(prompt: prompt) {
+                                continuation.yield(event)
                             }
                             continuation.finish()
                             return
@@ -495,14 +516,14 @@ final class AIService {
                                 // Handle text delta events
                                 if eventType == "response.output_text.delta" {
                                     if let delta = json["delta"] as? String {
-                                        continuation.yield(delta)
+                                        continuation.yield(.content(delta))
                                     }
                                 }
                                 // Also check for content_part deltas (alternate format)
                                 else if eventType == "response.content_part.delta" {
                                     if let delta = json["delta"] as? [String: Any],
                                        let text = delta["text"] as? String {
-                                        continuation.yield(text)
+                                        continuation.yield(.content(text))
                                     }
                                 }
                                 #if DEBUG
@@ -550,9 +571,15 @@ final class AIService {
                         print("[AIService] Falling back to GPT-4o after error...")
                         #endif
                         do {
-                            let fallbackService = AIService(configuration: config.withFallback())
-                            for try await chunk in fallbackService.callOpenAIStreaming(prompt: prompt) {
-                                continuation.yield(chunk)
+                            // Notify user of fallback with visible warning
+                            continuation.yield(.content("⚠️ *GPT-5.2 is currently unavailable. Using GPT-4o (web search not available).*\n\n"))
+                            // Notify job manager of fallback for accurate model tracking
+                            let fallbackConfig = config.withFallback()
+                            continuation.yield(.fallbackOccurred(modelId: fallbackConfig.model, webSearchEnabled: fallbackConfig.webSearchEnabled))
+
+                            let fallbackService = AIService(configuration: fallbackConfig)
+                            for try await event in fallbackService.callOpenAIStreaming(prompt: prompt) {
+                                continuation.yield(event)
                             }
                             continuation.finish()
                         } catch {
@@ -570,7 +597,7 @@ final class AIService {
     // MARK: - Chat Completions API (GPT-4o)
 
     /// Stream using the Chat Completions API for GPT-4o (proven stable fallback)
-    private func callChatCompletionsStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
+    private func callChatCompletionsStreaming(prompt: String) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 guard !config.apiKey.isEmpty else {
@@ -633,7 +660,7 @@ final class AIService {
                                let choices = json["choices"] as? [[String: Any]],
                                let delta = choices.first?["delta"] as? [String: Any],
                                let content = delta["content"] as? String {
-                                continuation.yield(content)
+                                continuation.yield(.content(content))
                             }
                         }
                     }
@@ -646,7 +673,7 @@ final class AIService {
         }
     }
 
-    private func callOpenAI(prompt: String) async throws -> String {
+    private func callOpenAI(prompt: String) async throws -> NonStreamingResult {
         switch config.provider {
         case .gpt5_2:
             return try await callResponsesAPI(prompt: prompt)
@@ -656,7 +683,7 @@ final class AIService {
     }
 
     /// Non-streaming Responses API call for GPT-5.2
-    private func callResponsesAPI(prompt: String) async throws -> String {
+    private func callResponsesAPI(prompt: String) async throws -> NonStreamingResult {
         guard !config.apiKey.isEmpty else {
             throw AIError.noAPIKey
         }
@@ -710,13 +737,19 @@ final class AIService {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         do {
-            return try await performResponsesAPIRequest(request: request)
+            let content = try await performResponsesAPIRequest(request: request)
+            return NonStreamingResult(
+                content: content,
+                modelId: config.model,
+                usedWebSearch: config.webSearchEnabled
+            )
         } catch {
             // Attempt fallback if enabled
             if config.autoFallback {
                 #if DEBUG
                 print("[AIService] Responses API failed, falling back to GPT-4o: \(error)")
                 #endif
+                // Fallback returns NonStreamingResult with correct fallback model info
                 let fallbackService = AIService(configuration: config.withFallback())
                 return try await fallbackService.callOpenAI(prompt: prompt)
             }
@@ -725,7 +758,7 @@ final class AIService {
     }
 
     /// Non-streaming Chat Completions API call for GPT-4o
-    private func callChatCompletionsAPI(prompt: String) async throws -> String {
+    private func callChatCompletionsAPI(prompt: String) async throws -> NonStreamingResult {
         guard !config.apiKey.isEmpty else {
             throw AIError.noAPIKey
         }
@@ -755,7 +788,12 @@ final class AIService {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        return try await performChatCompletionsRequest(request: request)
+        let content = try await performChatCompletionsRequest(request: request)
+        return NonStreamingResult(
+            content: content,
+            modelId: config.model,
+            usedWebSearch: config.webSearchEnabled
+        )
     }
 
     // MARK: - Chat Completions Request Handling
@@ -964,6 +1002,10 @@ final class AnalysisJobManager {
         var streamingResult: String = ""  // Accumulates streaming chunks
         var error: Error?
 
+        // Actual model used for this job (updated on fallback)
+        var modelId: String
+        var webSearchEnabled: Bool
+
         enum Status {
             case queued
             case running
@@ -975,12 +1017,6 @@ final class AnalysisJobManager {
 
     private(set) var jobs: [UUID: Job] = [:]
     private let aiService: AIService
-
-    /// Model ID for the current session (e.g., "gpt-5.2", "gpt-4o")
-    var modelId: String { aiService.modelId }
-
-    /// Whether web search is enabled for the current session
-    var isWebSearchEnabled: Bool { aiService.isWebSearchEnabled }
 
     init(aiService: AIService = AIService()) {
         self.aiService = aiService
@@ -999,7 +1035,9 @@ final class AnalysisJobManager {
         let jobId = UUID()
         jobs[jobId] = Job(
             id: jobId,
-            status: .queued
+            status: .queued,
+            modelId: aiService.modelId,
+            webSearchEnabled: aiService.isWebSearchEnabled
         )
 
         Task {
@@ -1049,18 +1087,31 @@ final class AnalysisJobManager {
             chunks.reserveCapacity(100)  // Pre-allocate for typical response
             var updateCounter = 0
 
-            for try await chunk in aiService.callOpenAIStreaming(prompt: prompt) {
-                chunks.append(chunk)
-                updateCounter += 1
+            for try await event in aiService.callOpenAIStreaming(prompt: prompt) {
+                switch event {
+                case .content(let chunk):
+                    chunks.append(chunk)
+                    updateCounter += 1
 
-                // Update UI every 3 chunks to reduce main thread overhead
-                // This also reduces string concatenation frequency
-                if updateCounter >= 3 {
-                    updateCounter = 0
-                    let currentResult = chunks.joined()
-                    await MainActor.run {
-                        jobs[id]?.streamingResult = currentResult
+                    // Update UI every 3 chunks to reduce main thread overhead
+                    // This also reduces string concatenation frequency
+                    if updateCounter >= 3 {
+                        updateCounter = 0
+                        let currentResult = chunks.joined()
+                        await MainActor.run {
+                            jobs[id]?.streamingResult = currentResult
+                        }
                     }
+
+                case .fallbackOccurred(let modelId, let webSearchEnabled):
+                    // Update job with actual model used after fallback
+                    await MainActor.run {
+                        jobs[id]?.modelId = modelId
+                        jobs[id]?.webSearchEnabled = webSearchEnabled
+                    }
+                    #if DEBUG
+                    print("[AnalysisJobManager] Job \(id.uuidString.prefix(8)) fallback to \(modelId)")
+                    #endif
                 }
             }
 
@@ -1216,7 +1267,7 @@ final class AnalysisJobManager {
         history: [(question: String, answer: String)],
         priorAnalysisContext: (type: AnalysisType, result: String)? = nil
     ) -> String {
-        let webGuidance = isWebSearchEnabled ? webSearchGuidance(for: type) : ""
+        let webGuidance = aiService.isWebSearchEnabled ? webSearchGuidance(for: type) : ""
 
         switch type {
         case .factCheck:

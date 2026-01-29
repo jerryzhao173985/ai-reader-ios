@@ -683,7 +683,8 @@ final class ReaderViewModel {
                                     type: type,
                                     prompt: question ?? text,
                                     response: result,
-                                    isActiveJob: isActiveJob
+                                    isActiveJob: isActiveJob,
+                                    jobId: jobId
                                 )
                             }
                         }
@@ -713,13 +714,15 @@ final class ReaderViewModel {
         }
     }
 
-    func saveAnalysis(to highlight: HighlightModel, type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true) {
+    func saveAnalysis(to highlight: HighlightModel, type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true, jobId: UUID) {
+        let job = analysisJobManager.getJob(jobId)
+
         let analysis = AIAnalysisModel(
             analysisType: type,
             prompt: prompt,
             response: response,
-            modelUsed: analysisJobManager.modelId,
-            usedWebSearch: analysisJobManager.isWebSearchEnabled
+            modelUsed: job?.modelId ?? "unknown",
+            usedWebSearch: job?.webSearchEnabled ?? false
         )
 
         analysis.highlight = highlight
@@ -978,12 +981,14 @@ final class ReaderViewModel {
                                         print("[FollowUp] SKIPPED: Duplicate custom question already exists")
                                         #endif
                                     } else {
+                                        let job = analysisJobManager.getJob(jobId)
+
                                         let analysis = AIAnalysisModel(
                                             analysisType: .customQuestion,
                                             prompt: question,
                                             response: result,
-                                            modelUsed: analysisJobManager.modelId,
-                                            usedWebSearch: analysisJobManager.isWebSearchEnabled
+                                            modelUsed: job?.modelId ?? "unknown",
+                                            usedWebSearch: job?.webSearchEnabled ?? false
                                         )
                                         analysis.highlight = freshHighlight
                                         freshHighlight.analyses.append(analysis)
