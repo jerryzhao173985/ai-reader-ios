@@ -399,3 +399,85 @@ for try await event in aiService.callOpenAIStreaming(...) {
 
 The `await` in the streaming loop **suspends** (releases MainActor) during network I/O,
 allowing the UI to remain responsive. When data arrives, execution resumes on MainActor.
+
+---
+
+## 12. Concrete Bugs Fixed During Migration
+
+### 12.1 Timer Data Race (FIXED)
+
+**Bug**: Timer callback accessing @MainActor-isolated property from non-MainActor context.
+
+```swift
+// BEFORE (data race):
+undoTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+    self?.deletedHighlightForUndo = nil  // Timer runs on RunLoop, NOT MainActor!
+}
+
+// AFTER (correct):
+undoTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+    Task { @MainActor in
+        self?.deletedHighlightForUndo = nil  // Explicitly hop to MainActor
+    }
+}
+```
+
+**Root Cause**: `Timer.scheduledTimer` callbacks execute on the RunLoop's thread, not on MainActor.
+When `ReaderViewModel` became `@MainActor`, its properties require MainActor access. The Timer
+callback was accessing `deletedHighlightForUndo` from a non-MainActor context - a data race.
+
+**Discovery**: Only detectable after explicit `@MainActor` annotation made the compiler enforce isolation.
+
+### 12.2 Memory Leak (FIXED)
+
+**Bug**: `clearJob()` method existed but was never called - jobs accumulated in memory forever.
+
+```swift
+// AnalysisJobManager
+func clearJob(_ id: UUID) {
+    jobs.removeValue(forKey: id)  // EXISTED BUT NEVER CALLED!
+}
+```
+
+**Fix**: Added `analysisJobManager.clearJob(jobId)` after every job completion/error path in:
+- `ReaderViewModel.pollJobForHighlight()` - completed + error cases
+- `ReaderViewModel.askFollowUpQuestion()` polling - completed + error cases
+- `HighlightAnalysisManager.pollJob()` - completed + error cases
+- `HighlightAnalysisManager.pollFollowUpJob()` - completed + error cases
+
+**Impact**: For power users running hundreds of analyses per session, this prevented unbounded
+memory growth from accumulated job entries.
+
+---
+
+## 13. New Capabilities Enabled by Swift Concurrency
+
+### What We Gained
+
+| Capability | Before (Implicit) | After (@MainActor) |
+|------------|------------------|-------------------|
+| Compiler enforcement | None - races silent | Compiler catches isolation violations |
+| Timer safety | Data race possible | Forced to use `Task { @MainActor in }` |
+| Sendable requirements | None | Can use `Error` directly (no wrapper) |
+| Call sites | Required `await` boilerplate | Synchronous from UI code |
+| Mental model | "Works by accident" | Explicit, documented, enforceable |
+| Future Swift 6 | Would require migration | Already compliant |
+
+### Future Enhancements Now Possible
+
+1. **Structured Concurrency**: Can use `TaskGroup` for parallel analysis batches
+2. **Task Cancellation**: Can cancel in-flight analyses when user navigates away
+3. **AsyncSequence Processing**: Clean streaming data transformation
+4. **Actor Interop**: If needed, can add actors for truly isolated work
+
+---
+
+## 14. Conclusion
+
+The `@MainActor` migration was **not just about alignment** - it:
+
+1. **Fixed a real Timer data race** that could cause intermittent crashes
+2. **Fixed a memory leak** causing unbounded job accumulation
+3. **Simplified call sites** (no `await`, no `Task {}` wrappers for UI code)
+4. **Made isolation explicit** for future maintainability
+5. **Prepared for Swift 6** where MainActor-by-default is the direction

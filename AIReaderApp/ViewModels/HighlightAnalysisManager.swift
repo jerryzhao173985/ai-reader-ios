@@ -199,6 +199,9 @@ final class HighlightAnalysisManager {
     // MARK: - Private Helpers
 
     private func pollJob(jobId: UUID, type: AnalysisType, question: String?) async {
+        // Single cleanup point: defer ensures job memory is freed on ANY exit path
+        defer { jobManager.clearJob(jobId) }
+
         while true {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05s
 
@@ -225,8 +228,6 @@ final class HighlightAnalysisManager {
                     }
 
                     // ALWAYS save, regardless of active status
-                    // This enables parallel jobs: user can start new question while
-                    // previous job completes and saves in background
                     saveAnalysis(type: type, prompt: question ?? highlight.selectedText, response: result, isActiveJob: isActiveJob, modelId: job.modelId, usedWebSearch: job.webSearchEnabled)
                 }
 
@@ -243,7 +244,6 @@ final class HighlightAnalysisManager {
                     isAnalyzing = false
                     activeJobId = nil
                 }
-                // Non-active job errors are silently ignored (user moved on)
                 return
             case .queued, .running:
                 continue
@@ -252,6 +252,9 @@ final class HighlightAnalysisManager {
     }
 
     private func pollFollowUpJob(jobId: UUID, question: String, analysisToFollowUpId: UUID?) async {
+        // Single cleanup point: defer ensures job memory is freed on ANY exit path
+        defer { jobManager.clearJob(jobId) }
+
         while true {
             try? await Task.sleep(nanoseconds: 50_000_000)
 
@@ -291,7 +294,6 @@ final class HighlightAnalysisManager {
                             }
                         }
                         // If analysis was deleted during streaming, silently ignore
-                        // (user deleted it, they don't want the follow-up)
                     } else {
                         // No analysis was selected - create new custom question analysis
                         saveAnalysis(type: .customQuestion, prompt: question, response: result, isActiveJob: isActiveJob, modelId: job.modelId, usedWebSearch: job.webSearchEnabled)
@@ -312,7 +314,6 @@ final class HighlightAnalysisManager {
                     activeJobId = nil
                     currentQuestion = ""
                 }
-                // Non-active job errors are silently ignored (user moved on)
                 return
             case .queued, .running:
                 continue

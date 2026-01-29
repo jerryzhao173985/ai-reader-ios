@@ -17,8 +17,8 @@
     },
     {
       "type": "technical",
-      "content": "AnalysisJobManager (@MainActor final class): Converted from actor to @MainActor class following Apple guidance 'Do not use actors for SwiftUI data models'. Job struct no longer needs Sendable (uses Error directly). All callers call synchronously (no await) from @MainActor context. Pattern: let jobId = jobManager.queueAnalysis(...) returns UUID synchronously, then Task { await pollJob() } inherits @MainActor. Polling directly reads/writes state (no MainActor.run wrappers needed). Parallel analysis: highlightToJobMap tracks job-to-highlight, isActiveJob guard prevents background jobs from hijacking UI. The await in streaming loops suspends (frees MainActor) during I/O but resumes on MainActor - no UI blocking. See docs/analysis-job-threading-investigation.md for full design rationale.",
-      "added_at": "2026-01-29T16:00:00.000000"
+      "content": "Concurrency (@MainActor pattern): AnalysisJobManager is @MainActor final class (not actor) following Apple guidance for SwiftUI data models. All callers call synchronously (no await). Pattern: let jobId = jobManager.queueAnalysis(...) returns UUID synchronously, then Task { await pollJob() } inherits @MainActor. Parallel analysis: highlightToJobMap tracks job-to-highlight, isActiveJob guard prevents background jobs from hijacking UI. Timer callbacks require explicit MainActor hop: Timer.scheduledTimer { Task { @MainActor in ... } }. Memory cleanup: use defer { clearJob(jobId) } at top of polling functions - ensures cleanup on ANY exit path. See docs/analysis-job-threading-investigation.md for full design rationale. Swift 6 analysis identified: LibraryViewModel needs @MainActor, polling loops need Task.isCancelled checks, NonStreamingResult/EPUB structs need Sendable.",
+      "added_at": "2026-01-29T18:30:00.000000"
     },
     {
       "type": "decision",
@@ -32,37 +32,12 @@
     },
     {
       "type": "future_enhancement",
-      "content": "Portable export format (.aireader) with full data hierarchy (highlights -> analyses -> thread -> turns) for backup/restore. Import functionality to load exported data. Currently not essential - standard export (Markdown/JSON) available in HighlightsView.",
-      "added_at": "2026-01-25T21:30:00.000000"
+      "content": "Swift Concurrency enhancements planned in docs/swift-concurrency-enhancement-plan.md: P0 (task cancellation on navigation, graceful streaming interruption), P1 (batch analysis with TaskGroup, background notifications), P2 (progress indicators, smart pre-fetching), P3 (retry logic, multi-highlight batch). Also: portable export format (.aireader) for backup/restore - currently not essential since Markdown/JSON export available.",
+      "added_at": "2026-01-29T18:30:00.000000"
     }
   ],
   "manual_memories": [],
-  "realtime_memories": [
-    {
-      "type": "claude_response",
-      "content": "`★ Insight ─────────────────────────────────────`\n**Final Verdict: Changes Are Working Correctly**\n\nThe console logs prove our `@MainActor` migration is **functionally identical** to the original whil",
-      "added_at": "2026-01-29T17:00:55.772423",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "After testing these key flow on my physical device (iPhone 15 Pro Max), 1. Single Analysis: Tap highlight → Fact Check → Verify streaming works smoothly 2. Parallel Jobs: Start one analysis → Before i",
-      "added_at": "2026-01-29T17:00:55.772555",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "claude_response",
-      "content": "**Conclusion**: The `@MainActor` migration is **verified working** on physical device. All original functionality preserved, mental model is now explicit and cleaner.\n\nWould you like me to commit thes",
-      "added_at": "2026-01-29T17:18:57.810166",
-      "source": "realtime_capture"
-    },
-    {
-      "type": "message",
-      "content": "Yes please as you thoroughly investigated and gather all knowledge and align well with docs and verified and tested and also more importantly you have thoroughly and carefully looked deeply into code ",
-      "added_at": "2026-01-29T17:18:57.810190",
-      "source": "realtime_capture"
-    }
-  ],
+  "realtime_memories": [],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-29T17:18:57.810192"
+  "updated_at": "2026-01-29T21:15:00.000000"
 }

@@ -650,6 +650,9 @@ final class ReaderViewModel {
         // Poll for streaming updates and completion
         // Task inherits @MainActor context - state updates are automatic
         Task {
+            // Single cleanup point: defer ensures job memory is freed on ANY exit path
+            defer { analysisJobManager.clearJob(jobId) }
+
             while true {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
@@ -691,7 +694,6 @@ final class ReaderViewModel {
                         }
                     }
                     // Clean up job mapping only if this job is still the tracked one
-                    // Prevents earlier job from removing a later job's entry
                     if highlightToJobMap[highlightId] == jobId {
                         highlightToJobMap.removeValue(forKey: highlightId)
                     }
@@ -892,6 +894,9 @@ final class ReaderViewModel {
         // Poll for streaming updates and completion
         // Task inherits @MainActor context - state updates are automatic
         Task {
+            // Single cleanup point: defer ensures job memory is freed on ANY exit path
+            defer { analysisJobManager.clearJob(jobId) }
+
             while true {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
@@ -1033,7 +1038,6 @@ final class ReaderViewModel {
                         }
                     }
                     // Clean up job mapping only if this job is still the tracked one
-                    // Prevents earlier job from removing a later job's entry
                     if highlightToJobMap[highlightId] == jobId {
                         highlightToJobMap.removeValue(forKey: highlightId)
                     }
