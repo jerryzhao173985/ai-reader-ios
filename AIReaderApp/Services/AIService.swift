@@ -91,7 +91,8 @@ enum StreamEvent: Sendable {
 }
 
 /// Result from non-streaming AI calls, includes model tracking info
-private struct NonStreamingResult {
+/// Used by AnalysisJobManager for non-streaming job execution
+struct NonStreamingResult {
     let content: String
     let modelId: String
     let usedWebSearch: Bool
@@ -673,6 +674,15 @@ final class AIService {
         }
     }
 
+    // MARK: - Non-Streaming API (for batch jobs)
+
+    /// Non-streaming AI call with model tracking
+    /// Returns NonStreamingResult with content and model info (handles fallback automatically)
+    /// Used by AnalysisJobManager for non-streaming job execution
+    func callOpenAINonStreaming(prompt: String) async throws -> NonStreamingResult {
+        return try await callOpenAI(prompt: prompt)
+    }
+
     private func callOpenAI(prompt: String) async throws -> NonStreamingResult {
         switch config.provider {
         case .gpt5_2:
@@ -1006,10 +1016,15 @@ final class AnalysisJobManager {
         var modelId: String
         var webSearchEnabled: Bool
 
+        // Whether this job uses streaming (true) or batch mode (false)
+        // Streaming: UI updates during processing via streamingResult
+        // Non-streaming: UI updates only on completion via result
+        let streaming: Bool
+
         enum Status {
             case queued
             case running
-            case streaming  // New status for active streaming
+            case streaming  // Active streaming (only for streaming jobs)
             case completed
             case error
         }
@@ -1030,27 +1045,44 @@ final class AnalysisJobManager {
         chapterContext: String? = nil,
         question: String? = nil,
         history: [(question: String, answer: String)] = [],
-        priorAnalysisContext: (type: AnalysisType, result: String)? = nil
+        priorAnalysisContext: (type: AnalysisType, result: String)? = nil,
+        streaming: Bool = true  // Default true: all existing callers unchanged
     ) -> UUID {
         let jobId = UUID()
         jobs[jobId] = Job(
             id: jobId,
             status: .queued,
             modelId: aiService.modelId,
-            webSearchEnabled: aiService.isWebSearchEnabled
+            webSearchEnabled: aiService.isWebSearchEnabled,
+            streaming: streaming
         )
 
         Task {
-            await runJobStreaming(
-                id: jobId,
-                type: type,
-                text: text,
-                context: context,
-                chapterContext: chapterContext,
-                question: question,
-                history: history,
-                priorAnalysisContext: priorAnalysisContext
-            )
+            if streaming {
+                // Streaming path: UI updates during processing (existing behavior)
+                await runJobStreaming(
+                    id: jobId,
+                    type: type,
+                    text: text,
+                    context: context,
+                    chapterContext: chapterContext,
+                    question: question,
+                    history: history,
+                    priorAnalysisContext: priorAnalysisContext
+                )
+            } else {
+                // Non-streaming path: UI updates only on completion
+                await runJobNonStreaming(
+                    id: jobId,
+                    type: type,
+                    text: text,
+                    context: context,
+                    chapterContext: chapterContext,
+                    question: question,
+                    history: history,
+                    priorAnalysisContext: priorAnalysisContext
+                )
+            }
         }
 
         return jobId
@@ -1122,6 +1154,54 @@ final class AnalysisJobManager {
                 jobs[id]?.result = fullResult
                 jobs[id]?.streamingResult = fullResult
             }
+        } catch {
+            await MainActor.run {
+                jobs[id]?.status = .error
+                jobs[id]?.error = error
+            }
+        }
+    }
+
+    /// Non-streaming job execution
+    /// Calls AI API once and updates job on completion (no intermediate UI updates)
+    /// Uses same model tracking as streaming via NonStreamingResult
+    private func runJobNonStreaming(
+        id: UUID,
+        type: AnalysisType,
+        text: String,
+        context: String,
+        chapterContext: String?,
+        question: String?,
+        history: [(question: String, answer: String)],
+        priorAnalysisContext: (type: AnalysisType, result: String)? = nil
+    ) async {
+        jobs[id]?.status = .running
+
+        // Handle comment type specially (no AI call needed)
+        if type == .comment {
+            jobs[id]?.status = .completed
+            jobs[id]?.result = question ?? ""
+            return
+        }
+
+        // Build the prompt based on analysis type (same as streaming)
+        let prompt = buildPrompt(type: type, text: text, context: context, chapterContext: chapterContext, question: question, history: history, priorAnalysisContext: priorAnalysisContext)
+
+        do {
+            // Call non-streaming API - returns NonStreamingResult with model tracking
+            let result = try await aiService.callOpenAINonStreaming(prompt: prompt)
+
+            await MainActor.run {
+                // Update job with result and model info from NonStreamingResult
+                jobs[id]?.result = result.content
+                jobs[id]?.modelId = result.modelId
+                jobs[id]?.webSearchEnabled = result.usedWebSearch
+                jobs[id]?.status = .completed
+            }
+
+            #if DEBUG
+            print("[AnalysisJobManager] Non-streaming job \(id.uuidString.prefix(8)) completed with model \(result.modelId)")
+            #endif
         } catch {
             await MainActor.run {
                 jobs[id]?.status = .error
