@@ -15,6 +15,7 @@ enum FollowUpInputMode: Equatable {
     case addComment     // Adding a comment (no AI call, just user text)
 }
 
+@MainActor
 @Observable
 final class ReaderViewModel {
     // MARK: - Properties
@@ -363,7 +364,9 @@ final class ReaderViewModel {
         // Start undo timer (5 seconds to undo)
         undoTimer?.invalidate()
         undoTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
-            self?.deletedHighlightForUndo = nil
+            Task { @MainActor in
+                self?.deletedHighlightForUndo = nil
+            }
         }
 
         // Delete from database
@@ -632,6 +635,9 @@ final class ReaderViewModel {
         // for Key Points - not Key Points streaming under Discussion's "Follow-ups" section
         selectedAnalysis = nil
 
+        // Queue job synchronously - @MainActor class allows direct call without await
+        // Job ID is returned immediately, no race condition with UI state
+        let highlightId = highlight.id
         let jobId = analysisJobManager.queueAnalysis(
             type: type,
             text: text,
@@ -639,72 +645,65 @@ final class ReaderViewModel {
             chapterContext: currentChapter?.plainText,
             question: question
         )
-
-        // Track which job belongs to which highlight for proper streaming display
-        let highlightId = highlight.id
         highlightToJobMap[highlightId] = jobId
 
         // Poll for streaming updates and completion
+        // Task inherits @MainActor context - state updates are automatic
         Task {
             while true {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
+                // Synchronous call - no await needed (both are @MainActor)
                 guard let job = analysisJobManager.getJob(jobId) else { break }
 
                 switch job.status {
                 case .streaming:
-                    await MainActor.run {
-                        // Only update analysisResult if:
-                        // 1. This is the currently selected highlight
-                        // 2. This is the active job for this highlight (prevents parallel job flickering)
-                        if !job.streamingResult.isEmpty,
-                           selectedHighlight?.id == highlightId,
-                           highlightToJobMap[highlightId] == jobId {
-                            analysisResult = job.streamingResult
-                        }
+                    // Only update analysisResult if:
+                    // 1. This is the currently selected highlight
+                    // 2. This is the active job for this highlight (prevents parallel job flickering)
+                    if !job.streamingResult.isEmpty,
+                       selectedHighlight?.id == highlightId,
+                       highlightToJobMap[highlightId] == jobId {
+                        analysisResult = job.streamingResult
                     }
                 case .completed:
-                    await MainActor.run {
-                        if let result = job.result {
-                            // Only update UI state if this is still the active job for this highlight
-                            // Prevents older job from overwriting newer job's streaming state
-                            let isActiveJob = highlightToJobMap[highlightId] == jobId
-                            if selectedHighlight?.id == highlightId && isActiveJob {
-                                analysisResult = result
-                                isAnalyzing = false
-                            }
-                            // Only save if highlight wasn't deleted while analysis was running
-                            // Use book.highlights (not currentChapterHighlights) so analysis saves
-                            // even when user switches chapters during background processing
-                            // Fetch fresh highlight from context (not captured reference) for Sendable safety
-                            if let freshHighlight = book.highlights.first(where: { $0.id == highlightId }) {
-                                saveAnalysis(
-                                    to: freshHighlight,
-                                    type: type,
-                                    prompt: question ?? text,
-                                    response: result,
-                                    isActiveJob: isActiveJob,
-                                    jobId: jobId
-                                )
-                            }
+                    if let result = job.result {
+                        // Only update UI state if this is still the active job for this highlight
+                        // Prevents older job from overwriting newer job's streaming state
+                        let isActiveJob = highlightToJobMap[highlightId] == jobId
+                        if selectedHighlight?.id == highlightId && isActiveJob {
+                            analysisResult = result
+                            isAnalyzing = false
                         }
-                        // Clean up job mapping only if this job is still the tracked one
-                        // Prevents earlier job from removing a later job's entry
-                        if highlightToJobMap[highlightId] == jobId {
-                            highlightToJobMap.removeValue(forKey: highlightId)
+                        // Only save if highlight wasn't deleted while analysis was running
+                        // Use book.highlights (not currentChapterHighlights) so analysis saves
+                        // even when user switches chapters during background processing
+                        if let freshHighlight = book.highlights.first(where: { $0.id == highlightId }) {
+                            saveAnalysis(
+                                to: freshHighlight,
+                                type: type,
+                                prompt: question ?? text,
+                                response: result,
+                                isActiveJob: isActiveJob,
+                                modelId: job.modelId,
+                                usedWebSearch: job.webSearchEnabled
+                            )
                         }
+                    }
+                    // Clean up job mapping only if this job is still the tracked one
+                    // Prevents earlier job from removing a later job's entry
+                    if highlightToJobMap[highlightId] == jobId {
+                        highlightToJobMap.removeValue(forKey: highlightId)
                     }
                     return
                 case .error:
-                    await MainActor.run {
-                        if selectedHighlight?.id == highlightId {
-                            analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
-                            isAnalyzing = false
-                        }
-                        // Only remove if this job is still the tracked one
-                        if highlightToJobMap[highlightId] == jobId {
-                            highlightToJobMap.removeValue(forKey: highlightId)
-                        }
+                    if selectedHighlight?.id == highlightId {
+                        analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
+                        isAnalyzing = false
+                    }
+                    // Only remove if this job is still the tracked one
+                    if highlightToJobMap[highlightId] == jobId {
+                        highlightToJobMap.removeValue(forKey: highlightId)
                     }
                     return
                 case .queued, .running:
@@ -714,15 +713,13 @@ final class ReaderViewModel {
         }
     }
 
-    func saveAnalysis(to highlight: HighlightModel, type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true, jobId: UUID) {
-        let job = analysisJobManager.getJob(jobId)
-
+    func saveAnalysis(to highlight: HighlightModel, type: AnalysisType, prompt: String, response: String, isActiveJob: Bool = true, modelId: String, usedWebSearch: Bool) {
         let analysis = AIAnalysisModel(
             analysisType: type,
             prompt: prompt,
             response: response,
-            modelUsed: job?.modelId ?? "unknown",
-            usedWebSearch: job?.webSearchEnabled ?? false
+            modelUsed: modelId,
+            usedWebSearch: usedWebSearch
         )
 
         analysis.highlight = highlight
@@ -877,6 +874,10 @@ final class ReaderViewModel {
             }
         }
 
+        // Queue job synchronously - @MainActor class allows direct call without await
+        // Job ID is returned immediately, no race condition with UI state
+        let highlightId = highlight.id
+        let analysisToFollowUpId = analysisToFollowUp?.id
         let jobId = analysisJobManager.queueAnalysis(
             type: .customQuestion,  // API call type (it's always a question to the AI)
             text: highlight.selectedText,
@@ -886,18 +887,15 @@ final class ReaderViewModel {
             history: history,
             priorAnalysisContext: priorAnalysisContext
         )
-
-        // Track which job belongs to which highlight for proper streaming display
-        // This ensures parallel follow-ups don't interfere with each other
-        let highlightId = highlight.id
-        let analysisToFollowUpId = analysisToFollowUp?.id  // Capture ID for Sendable safety
         highlightToJobMap[highlightId] = jobId
 
         // Poll for streaming updates and completion
+        // Task inherits @MainActor context - state updates are automatic
         Task {
             while true {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
+                // Synchronous call - no await needed (both are @MainActor)
                 guard let job = analysisJobManager.getJob(jobId) else { break }
 
                 switch job.status {
@@ -906,165 +904,158 @@ final class ReaderViewModel {
                     // Only update if:
                     // 1. This is the currently selected highlight
                     // 2. This is the active job for this highlight (prevents parallel job flickering)
-                    await MainActor.run {
-                        if !job.streamingResult.isEmpty,
-                           selectedHighlight?.id == highlightId,
-                           highlightToJobMap[highlightId] == jobId {
-                            analysisResult = job.streamingResult
-                        }
+                    if !job.streamingResult.isEmpty,
+                       selectedHighlight?.id == highlightId,
+                       highlightToJobMap[highlightId] == jobId {
+                        analysisResult = job.streamingResult
                     }
                 case .completed:
-                    await MainActor.run {
-                        // Check if this is the active job for this highlight BEFORE any state changes
-                        // This prevents parallel job interference (e.g., job A completing shouldn't reset
-                        // input mode while job B is still running)
-                        let isActiveJob = highlightToJobMap[highlightId] == jobId
+                    // Check if this is the active job for this highlight BEFORE any state changes
+                    // This prevents parallel job interference (e.g., job A completing shouldn't reset
+                    // input mode while job B is still running)
+                    let isActiveJob = highlightToJobMap[highlightId] == jobId
 
-                        if let result = job.result {
-                            // Only update UI state if this is still the active job
-                            if selectedHighlight?.id == highlightId && isActiveJob {
-                                analysisResult = result
-                                isAnalyzing = false
-                            }
+                    if let result = job.result {
+                        // Only update UI state if this is still the active job
+                        if selectedHighlight?.id == highlightId && isActiveJob {
+                            analysisResult = result
+                            isAnalyzing = false
+                        }
 
-                            // Only save if highlight wasn't deleted while analysis was running
-                            // Use book.highlights (not currentChapterHighlights) so analysis saves
-                            // even when user switches chapters during background processing
-                            if let freshHighlight = book.highlights.first(where: { $0.id == highlightId }) {
-                                // Look up fresh analysis using captured ID (Sendable safe)
-                                if let analysisId = analysisToFollowUpId {
-                                    // Analysis was selected - try to find it (might have been deleted)
-                                    guard let analysis = freshHighlight.analyses.first(where: { $0.id == analysisId }) else {
-                                        // Analysis was deleted during streaming
-                                        #if DEBUG
-                                        print("[FollowUp] ABORTED: Analysis \(analysisId.uuidString.prefix(8)) was deleted during streaming")
-                                        #endif
-                                        // Clean up: reset UI state if this was the active job
-                                        if highlightToJobMap[highlightId] == jobId {
-                                            highlightToJobMap.removeValue(forKey: highlightId)
-                                            if selectedHighlight?.id == highlightId {
-                                                isAnalyzing = false
-                                                analysisResult = nil
-                                            }
-                                        }
-                                        return
-                                    }
-                                    // Add turn to the analysis thread
-                                    // Note: addTurnToThread has built-in duplicate detection to prevent
-                                    // double-tap from creating duplicate turns
-                                    addTurnToThread(analysis: analysis, question: question, answer: result)
+                        // Only save if highlight wasn't deleted while analysis was running
+                        // Use book.highlights (not currentChapterHighlights) so analysis saves
+                        // even when user switches chapters during background processing
+                        if let freshHighlight = book.highlights.first(where: { $0.id == highlightId }) {
+                            // Look up fresh analysis using captured ID
+                            if let analysisId = analysisToFollowUpId {
+                                // Analysis was selected - try to find it (might have been deleted)
+                                guard let analysis = freshHighlight.analyses.first(where: { $0.id == analysisId }) else {
+                                    // Analysis was deleted during streaming
                                     #if DEBUG
-                                    print("[FollowUp] COMPLETE: Added turn to \(analysis.analysisType.displayName) id=\(analysis.id.uuidString.prefix(8))")
+                                    print("[FollowUp] ABORTED: Analysis \(analysisId.uuidString.prefix(8)) was deleted during streaming")
                                     #endif
+                                    // Clean up: reset UI state if this was the active job
+                                    if highlightToJobMap[highlightId] == jobId {
+                                        highlightToJobMap.removeValue(forKey: highlightId)
+                                        if selectedHighlight?.id == highlightId {
+                                            isAnalyzing = false
+                                            analysisResult = nil
+                                        }
+                                    }
+                                    return
+                                }
+                                // Add turn to the analysis thread
+                                // Note: addTurnToThread has built-in duplicate detection to prevent
+                                // double-tap from creating duplicate turns
+                                addTurnToThread(analysis: analysis, question: question, answer: result)
+                                #if DEBUG
+                                print("[FollowUp] COMPLETE: Added turn to \(analysis.analysisType.displayName) id=\(analysis.id.uuidString.prefix(8))")
+                                #endif
+                                // Only update selectedAnalysis if:
+                                // 1. Highlight is still selected
+                                // 2. This is the active job (no newer job has taken over)
+                                // 3. User hasn't switched to a different analysis (respect explicit user choice)
+                                let userStillViewingSameAnalysis = selectedAnalysis?.id == analysis.id || selectedAnalysis == nil
+                                #if DEBUG
+                                print("[FollowUp] Check: isActiveJob=\(isActiveJob) userStillViewingSame=\(userStillViewingSameAnalysis) currentSelected=\(selectedAnalysis?.analysisType.displayName ?? "nil")")
+                                #endif
+                                if selectedHighlight?.id == highlightId && isActiveJob && userStillViewingSameAnalysis {
+                                    selectedAnalysis = analysis
+                                }
+                            } else {
+                                // No analysis was selected (analysisToFollowUpId == nil) - create new custom question analysis
+                                // Check if an identical custom question already exists (double-tap protection)
+                                let isDuplicate = freshHighlight.analyses.contains { existing in
+                                    existing.analysisType == .customQuestion &&
+                                    existing.prompt == question &&
+                                    existing.response == result
+                                }
+
+                                if isDuplicate {
+                                    #if DEBUG
+                                    print("[FollowUp] SKIPPED: Duplicate custom question already exists")
+                                    #endif
+                                } else {
+                                    // Use job values directly - no await needed
+                                    let analysis = AIAnalysisModel(
+                                        analysisType: .customQuestion,
+                                        prompt: question,
+                                        response: result,
+                                        modelUsed: job.modelId,
+                                        usedWebSearch: job.webSearchEnabled
+                                    )
+                                    analysis.highlight = freshHighlight
+                                    freshHighlight.analyses.append(analysis)
+                                    // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
+                                    modelContext.insert(analysis)
+                                    try? modelContext.save()
+
+                                    #if DEBUG
+                                    print("[FollowUp] COMPLETE: Created new custom question id=\(analysis.id.uuidString.prefix(8))")
+                                    #endif
+
                                     // Only update selectedAnalysis if:
                                     // 1. Highlight is still selected
                                     // 2. This is the active job (no newer job has taken over)
-                                    // 3. User hasn't switched to a different analysis (respect explicit user choice)
-                                    let userStillViewingSameAnalysis = selectedAnalysis?.id == analysis.id || selectedAnalysis == nil
-                                    #if DEBUG
-                                    print("[FollowUp] Check: isActiveJob=\(isActiveJob) userStillViewingSame=\(userStillViewingSameAnalysis) currentSelected=\(selectedAnalysis?.analysisType.displayName ?? "nil")")
-                                    #endif
-                                    if selectedHighlight?.id == highlightId && isActiveJob && userStillViewingSameAnalysis {
+                                    // 3. User hasn't selected a different analysis since starting this question
+                                    //    (respect explicit user choice - they started with nil, if now non-nil they tapped something)
+                                    let userStillHasNoAnalysisSelected = selectedAnalysis == nil
+                                    if selectedHighlight?.id == highlightId && isActiveJob && userStillHasNoAnalysisSelected {
                                         selectedAnalysis = analysis
                                     }
-                                } else {
-                                    // No analysis was selected (analysisToFollowUpId == nil) - create new custom question analysis
-                                    // Check if an identical custom question already exists (double-tap protection)
-                                    let isDuplicate = freshHighlight.analyses.contains { existing in
-                                        existing.analysisType == .customQuestion &&
-                                        existing.prompt == question &&
-                                        existing.response == result
-                                    }
 
-                                    if isDuplicate {
+                                    // Use same deferral logic as saveAnalysis() for colorHex and marker updates
+                                    let markerUpdate = (highlightId: freshHighlight.id, analysisCount: freshHighlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
+                                    if hasActiveTextSelection {
+                                        pendingMarkerUpdatesQueue.append(markerUpdate)
                                         #if DEBUG
-                                        print("[FollowUp] SKIPPED: Duplicate custom question already exists")
+                                        print("[FollowUp] DEFERRED colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
                                         #endif
                                     } else {
-                                        let job = analysisJobManager.getJob(jobId)
-
-                                        let analysis = AIAnalysisModel(
-                                            analysisType: .customQuestion,
-                                            prompt: question,
-                                            response: result,
-                                            modelUsed: job?.modelId ?? "unknown",
-                                            usedWebSearch: job?.webSearchEnabled ?? false
-                                        )
-                                        analysis.highlight = freshHighlight
-                                        freshHighlight.analyses.append(analysis)
-                                        // NOTE: Don't update colorHex immediately - use deferral logic like saveAnalysis()
-                                        modelContext.insert(analysis)
-                                        try? modelContext.save()
-
-                                        #if DEBUG
-                                        print("[FollowUp] COMPLETE: Created new custom question id=\(analysis.id.uuidString.prefix(8))")
-                                        #endif
-
-                                        // Only update selectedAnalysis if:
-                                        // 1. Highlight is still selected
-                                        // 2. This is the active job (no newer job has taken over)
-                                        // 3. User hasn't selected a different analysis since starting this question
-                                        //    (respect explicit user choice - they started with nil, if now non-nil they tapped something)
-                                        let userStillHasNoAnalysisSelected = selectedAnalysis == nil
-                                        if selectedHighlight?.id == highlightId && isActiveJob && userStillHasNoAnalysisSelected {
-                                            selectedAnalysis = analysis
-                                        }
-
-                                        // Use same deferral logic as saveAnalysis() for colorHex and marker updates
-                                        let markerUpdate = (highlightId: freshHighlight.id, analysisCount: freshHighlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
-                                        if hasActiveTextSelection {
-                                            pendingMarkerUpdatesQueue.append(markerUpdate)
+                                        let oldColor = freshHighlight.colorHex
+                                        freshHighlight.colorHex = AnalysisType.customQuestion.colorHex
+                                        do {
+                                            try modelContext.save()
                                             #if DEBUG
-                                            print("[FollowUp] DEFERRED colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
+                                            print("[FollowUp] IMMEDIATE colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)): \(oldColor) → \(AnalysisType.customQuestion.colorHex)")
                                             #endif
-                                        } else {
-                                            let oldColor = freshHighlight.colorHex
-                                            freshHighlight.colorHex = AnalysisType.customQuestion.colorHex
-                                            do {
-                                                try modelContext.save()
-                                                #if DEBUG
-                                                print("[FollowUp] IMMEDIATE colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)): \(oldColor) → \(AnalysisType.customQuestion.colorHex)")
-                                                #endif
-                                            } catch {
-                                                #if DEBUG
-                                                print("[FollowUp] ERROR saving colorHex for highlight \(freshHighlight.id.uuidString.prefix(8)): \(error)")
-                                                #endif
-                                            }
-                                            pendingMarkerUpdate = markerUpdate
+                                        } catch {
+                                            #if DEBUG
+                                            print("[FollowUp] ERROR saving colorHex for highlight \(freshHighlight.id.uuidString.prefix(8)): \(error)")
+                                            #endif
                                         }
-                                        // Initial Q&A stored in prompt/response - no turn needed
-                                        // Turns are for FOLLOW-UP questions only
+                                        pendingMarkerUpdate = markerUpdate
                                     }
+                                    // Initial Q&A stored in prompt/response - no turn needed
+                                    // Turns are for FOLLOW-UP questions only
                                 }
                             }
                         }
-                        // Clean up job mapping only if this job is still the tracked one
-                        // Prevents earlier job from removing a later job's entry
-                        if highlightToJobMap[highlightId] == jobId {
-                            highlightToJobMap.removeValue(forKey: highlightId)
-                        }
-                        // Reset input mode only if:
-                        // 1. This highlight is still selected
-                        // 2. This was the active job (prevents parallel job A from resetting mode while B is active)
-                        if selectedHighlight?.id == highlightId && isActiveJob {
-                            followUpInputMode = .followUp
-                        }
+                    }
+                    // Clean up job mapping only if this job is still the tracked one
+                    // Prevents earlier job from removing a later job's entry
+                    if highlightToJobMap[highlightId] == jobId {
+                        highlightToJobMap.removeValue(forKey: highlightId)
+                    }
+                    // Reset input mode only if:
+                    // 1. This highlight is still selected
+                    // 2. This was the active job (prevents parallel job A from resetting mode while B is active)
+                    if selectedHighlight?.id == highlightId && isActiveJob {
+                        followUpInputMode = .followUp
                     }
                     return
                 case .error:
-                    await MainActor.run {
-                        // Check if this is the active job for this highlight
-                        // Prevents parallel job's error from disrupting newer job's state
-                        let isActiveJob = highlightToJobMap[highlightId] == jobId
-                        if selectedHighlight?.id == highlightId && isActiveJob {
-                            analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
-                            isAnalyzing = false
-                            followUpInputMode = .followUp
-                        }
-                        // Only remove if this job is still the tracked one
-                        if highlightToJobMap[highlightId] == jobId {
-                            highlightToJobMap.removeValue(forKey: highlightId)
-                        }
+                    // Check if this is the active job for this highlight
+                    // Prevents parallel job's error from disrupting newer job's state
+                    let isActiveJob = highlightToJobMap[highlightId] == jobId
+                    if selectedHighlight?.id == highlightId && isActiveJob {
+                        analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
+                        isAnalyzing = false
+                        followUpInputMode = .followUp
+                    }
+                    // Only remove if this job is still the tracked one
+                    if highlightToJobMap[highlightId] == jobId {
+                        highlightToJobMap.removeValue(forKey: highlightId)
                     }
                     return
                 case .queued, .running:
@@ -1160,22 +1151,23 @@ final class ReaderViewModel {
         selectedText = freshHighlight.selectedText
 
         // Check if this highlight has an ongoing analysis (streaming)
-        if let activeJobId = highlightToJobMap[targetId],
-           let job = analysisJobManager.getJob(activeJobId) {
-            // Show streaming result for this highlight's active job
-            isAnalyzing = (job.status == .streaming || job.status == .queued || job.status == .running)
-            if !job.streamingResult.isEmpty {
-                analysisResult = job.streamingResult
-            } else if let result = job.result {
-                analysisResult = result
-            } else {
-                analysisResult = nil
-            }
-            // Clear stale selectedAnalysis from previous highlight
-            // During active streaming, UI shows streaming view (not conversation view)
-            // When job completes, saveAnalysis() will set selectedAnalysis appropriately
+        if let activeJobId = highlightToJobMap[targetId] {
+            // There's an active job - set initial loading state
+            isAnalyzing = true
+            analysisResult = nil
             selectedAnalysis = nil
             currentAnalysisType = nil
+
+            // Synchronous call - no await needed (both are @MainActor)
+            if let job = analysisJobManager.getJob(activeJobId) {
+                // Show streaming result for this highlight's active job
+                isAnalyzing = (job.status == .streaming || job.status == .queued || job.status == .running)
+                if !job.streamingResult.isEmpty {
+                    analysisResult = job.streamingResult
+                } else if let result = job.result {
+                    analysisResult = result
+                }
+            }
         } else {
             // No active job - load the analysis matching the highlight's current color
             // Color represents "what user last viewed" - persist their selection across taps

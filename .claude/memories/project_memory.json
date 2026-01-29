@@ -17,8 +17,8 @@
     },
     {
       "type": "technical",
-      "content": "Model Tracking - Unified JobManager: Both streaming and non-streaming use AnalysisJobManager with queueAnalysis(streaming: Bool = true). Streaming path: Job.modelId/webSearchEnabled updated on fallback via StreamEvent.fallbackOccurred, UI updates via streamingResult during processing. Non-streaming path: runJobNonStreaming calls callOpenAINonStreaming which returns NonStreamingResult (carries modelId/usedWebSearch through recursive fallback), UI updates only on completion via result. Job struct has streaming:Bool field. Default streaming=true preserves existing behavior. saveAnalysis reads job.modelId/webSearchEnabled via jobId. Parallel analysis: highlightToJobMap tracks job-to-highlight. DeletedAnalysisData must capture ALL fields for undo preservation.",
-      "added_at": "2026-01-29T01:20:00.000000"
+      "content": "AnalysisJobManager (@MainActor final class): Converted from actor to @MainActor class following Apple guidance 'Do not use actors for SwiftUI data models'. Job struct no longer needs Sendable (uses Error directly). All callers call synchronously (no await) from @MainActor context. Pattern: let jobId = jobManager.queueAnalysis(...) returns UUID synchronously, then Task { await pollJob() } inherits @MainActor. Polling directly reads/writes state (no MainActor.run wrappers needed). Parallel analysis: highlightToJobMap tracks job-to-highlight, isActiveJob guard prevents background jobs from hijacking UI. The await in streaming loops suspends (frees MainActor) during I/O but resumes on MainActor - no UI blocking. See docs/analysis-job-threading-investigation.md for full design rationale.",
+      "added_at": "2026-01-29T16:00:00.000000"
     },
     {
       "type": "decision",
@@ -37,7 +37,32 @@
     }
   ],
   "manual_memories": [],
-  "realtime_memories": [],
+  "realtime_memories": [
+    {
+      "type": "claude_response",
+      "content": "`★ Insight ─────────────────────────────────────`\n**Final Verdict: Changes Are Working Correctly**\n\nThe console logs prove our `@MainActor` migration is **functionally identical** to the original whil",
+      "added_at": "2026-01-29T17:00:55.772423",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "message",
+      "content": "After testing these key flow on my physical device (iPhone 15 Pro Max), 1. Single Analysis: Tap highlight → Fact Check → Verify streaming works smoothly 2. Parallel Jobs: Start one analysis → Before i",
+      "added_at": "2026-01-29T17:00:55.772555",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "claude_response",
+      "content": "**Conclusion**: The `@MainActor` migration is **verified working** on physical device. All original functionality preserved, mental model is now explicit and cleaner.\n\nWould you like me to commit thes",
+      "added_at": "2026-01-29T17:18:57.810166",
+      "source": "realtime_capture"
+    },
+    {
+      "type": "message",
+      "content": "Yes please as you thoroughly investigated and gather all knowledge and align well with docs and verified and tested and also more importantly you have thoroughly and carefully looked deeply into code ",
+      "added_at": "2026-01-29T17:18:57.810190",
+      "source": "realtime_capture"
+    }
+  ],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-29T00:35:19.830867"
+  "updated_at": "2026-01-29T17:18:57.810192"
 }

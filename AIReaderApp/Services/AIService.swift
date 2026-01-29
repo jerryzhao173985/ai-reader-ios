@@ -1002,15 +1002,22 @@ final class AIService {
 }
 
 // MARK: - Analysis Job Manager
-/// Manages async analysis jobs with status tracking and streaming support
-@Observable
+/// Manages async analysis jobs with status tracking and streaming support.
+/// Uses @MainActor for thread-safe state access - all job state mutations happen on MainActor.
+/// Background AI API calls use async/await which suspends but doesn't block MainActor.
+///
+/// Design rationale (see analysis-job-threading-investigation.md):
+/// - @MainActor class is preferred over actor for UI-integrated managers per Swift Concurrency guidelines
+/// - Synchronous method calls from @MainActor callers (no await needed for queueAnalysis/getJob)
+/// - Task {} inside @MainActor inherits MainActor context for automatic thread safety
+@MainActor
 final class AnalysisJobManager {
     struct Job: Identifiable {
         let id: UUID
         var status: Status
         var result: String?
         var streamingResult: String = ""  // Accumulates streaming chunks
-        var error: Error?
+        var error: Error?  // Can use Error directly (no Sendable needed within MainActor)
 
         // Actual model used for this job (updated on fallback)
         var modelId: String
@@ -1037,6 +1044,9 @@ final class AnalysisJobManager {
         self.aiService = aiService
     }
 
+    /// Queue a new analysis job and start processing.
+    /// Returns immediately with job UUID - processing happens asynchronously.
+    /// Call is synchronous from @MainActor callers (no await needed).
     @discardableResult
     func queueAnalysis(
         type: AnalysisType,
@@ -1125,22 +1135,19 @@ final class AnalysisJobManager {
                     chunks.append(chunk)
                     updateCounter += 1
 
-                    // Update UI every 3 chunks to reduce main thread overhead
-                    // This also reduces string concatenation frequency
+                    // Update every 3 chunks to reduce update frequency
+                    // @MainActor ensures thread safety
                     if updateCounter >= 3 {
                         updateCounter = 0
                         let currentResult = chunks.joined()
-                        await MainActor.run {
-                            jobs[id]?.streamingResult = currentResult
-                        }
+                        jobs[id]?.streamingResult = currentResult
                     }
 
                 case .fallbackOccurred(let modelId, let webSearchEnabled):
                     // Update job with actual model used after fallback
-                    await MainActor.run {
-                        jobs[id]?.modelId = modelId
-                        jobs[id]?.webSearchEnabled = webSearchEnabled
-                    }
+                    // @MainActor ensures thread safety
+                    jobs[id]?.modelId = modelId
+                    jobs[id]?.webSearchEnabled = webSearchEnabled
                     #if DEBUG
                     print("[AnalysisJobManager] Job \(id.uuidString.prefix(8)) fallback to \(modelId)")
                     #endif
@@ -1148,17 +1155,15 @@ final class AnalysisJobManager {
             }
 
             // Final update with complete result
+            // @MainActor ensures thread safety
             let fullResult = chunks.joined()
-            await MainActor.run {
-                jobs[id]?.status = .completed
-                jobs[id]?.result = fullResult
-                jobs[id]?.streamingResult = fullResult
-            }
+            jobs[id]?.status = .completed
+            jobs[id]?.result = fullResult
+            jobs[id]?.streamingResult = fullResult
         } catch {
-            await MainActor.run {
-                jobs[id]?.status = .error
-                jobs[id]?.error = error
-            }
+            // @MainActor ensures thread safety
+            jobs[id]?.status = .error
+            jobs[id]?.error = error
         }
     }
 
@@ -1191,22 +1196,20 @@ final class AnalysisJobManager {
             // Call non-streaming API - returns NonStreamingResult with model tracking
             let result = try await aiService.callOpenAINonStreaming(prompt: prompt)
 
-            await MainActor.run {
-                // Update job with result and model info from NonStreamingResult
-                jobs[id]?.result = result.content
-                jobs[id]?.modelId = result.modelId
-                jobs[id]?.webSearchEnabled = result.usedWebSearch
-                jobs[id]?.status = .completed
-            }
+            // Update job with result and model info from NonStreamingResult
+            // @MainActor ensures thread safety
+            jobs[id]?.result = result.content
+            jobs[id]?.modelId = result.modelId
+            jobs[id]?.webSearchEnabled = result.usedWebSearch
+            jobs[id]?.status = .completed
 
             #if DEBUG
             print("[AnalysisJobManager] Non-streaming job \(id.uuidString.prefix(8)) completed with model \(result.modelId)")
             #endif
         } catch {
-            await MainActor.run {
-                jobs[id]?.status = .error
-                jobs[id]?.error = error
-            }
+            // @MainActor ensures thread safety
+            jobs[id]?.status = .error
+            jobs[id]?.error = error
         }
     }
 
