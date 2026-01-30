@@ -169,7 +169,8 @@ final class EPUBParserService {
     }
 
     // MARK: - OPF Parsing
-    struct EPUBMetadata {
+    /// Sendable: Contains only value types, safe to pass across isolation boundaries
+    struct EPUBMetadata: Sendable {
         var title: String?
         var authors: [String] = []
         var language: String?
@@ -180,14 +181,16 @@ final class EPUBParserService {
         var identifiers: [String: String] = [:]
     }
 
-    struct ManifestItem {
+    /// Sendable: Contains only value types, safe to pass across isolation boundaries
+    struct ManifestItem: Sendable {
         let id: String
         let href: String
         let mediaType: String
         var properties: String?
     }
 
-    struct SpineItem {
+    /// Sendable: Contains only value types, safe to pass across isolation boundaries
+    struct SpineItem: Sendable {
         let idref: String
         var linear: Bool = true
     }

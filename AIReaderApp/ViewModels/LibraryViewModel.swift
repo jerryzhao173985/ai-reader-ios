@@ -7,6 +7,7 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
+@MainActor
 @Observable
 final class LibraryViewModel {
     // MARK: - Properties
@@ -78,16 +79,14 @@ final class LibraryViewModel {
             importProgress = 1.0
 
             // Reload books list
-            await MainActor.run {
-                loadBooks()
-                isLoading = false
-            }
+            // Note: With @MainActor on class, we're already on MainActor after await
+            loadBooks()
+            isLoading = false
         } catch {
-            await MainActor.run {
-                errorMessage = "Failed to import book: \(error.localizedDescription)"
-                showingError = true
-                isLoading = false
-            }
+            // Note: With @MainActor on class, we're already on MainActor after await
+            errorMessage = "Failed to import book: \(error.localizedDescription)"
+            showingError = true
+            isLoading = false
         }
     }
 

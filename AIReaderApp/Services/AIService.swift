@@ -92,7 +92,8 @@ enum StreamEvent: Sendable {
 
 /// Result from non-streaming AI calls, includes model tracking info
 /// Used by AnalysisJobManager for non-streaming job execution
-struct NonStreamingResult {
+/// Sendable: Contains only value types, safe to pass across isolation boundaries
+struct NonStreamingResult: Sendable {
     let content: String
     let modelId: String
     let usedWebSearch: Bool

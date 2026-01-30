@@ -653,7 +653,9 @@ final class ReaderViewModel {
             // Single cleanup point: defer ensures job memory is freed on ANY exit path
             defer { analysisJobManager.clearJob(jobId) }
 
-            while true {
+            // Check Task.isCancelled on each iteration to enable cancellation
+            // (e.g., when user navigates away during analysis)
+            while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
                 // Synchronous call - no await needed (both are @MainActor)
@@ -897,7 +899,9 @@ final class ReaderViewModel {
             // Single cleanup point: defer ensures job memory is freed on ANY exit path
             defer { analysisJobManager.clearJob(jobId) }
 
-            while true {
+            // Check Task.isCancelled on each iteration to enable cancellation
+            // (e.g., when user navigates away during analysis)
+            while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
                 // Synchronous call - no await needed (both are @MainActor)
