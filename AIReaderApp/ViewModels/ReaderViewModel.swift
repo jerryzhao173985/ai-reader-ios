@@ -92,9 +92,29 @@ final class ReaderViewModel {
     /// Includes colorHex to update highlight background color when analysis completes
     var pendingMarkerUpdate: (highlightId: UUID, analysisCount: Int, colorHex: String)?
 
-    /// Maps highlight ID to its active job ID for proper streaming display
-    /// When user clicks a highlight, we show streaming from ITS job, not any random job
+    // MARK: - Job Tracking (Precise Control Model)
+    //
+    // Three components for complete job lifecycle management:
+    //   1. UI layer: which job's stream to display
+    //   2. Ownership layer: which jobs belong to which highlight
+    //   3. Cancellation layer: which specific jobs should stop
+    //
+    // Design: Job-level cancellation enables precise control.
+    // - Cancel single job: cancelledJobs.insert(jobId)
+    // - Cancel all for highlight: loop through highlightToJobIds, cancel each
+    // Jobs check `cancelledJobs.contains(jobId)` to exit cooperatively.
+
+    /// UI layer: Maps highlight ID to its LATEST job ID for streaming display
+    /// When parallel jobs run, only the latest job updates the UI
     private var highlightToJobMap: [UUID: UUID] = [:]
+
+    /// Ownership layer: Maps highlight ID to ALL its job IDs
+    /// Enables "cancel all jobs for highlight" and precise job tracking
+    private var highlightToJobIds: [UUID: Set<UUID>] = [:]
+
+    /// Cancellation layer: Set of job IDs that should stop processing
+    /// Jobs check this in their polling loop and exit if cancelled
+    private var cancelledJobs: Set<UUID> = []
 
     /// Queue of pending marker updates to apply when no text selection is active
     /// This prevents marker refresh from disrupting user's text selection
@@ -324,6 +344,10 @@ final class ReaderViewModel {
 
     func deleteHighlight(_ highlight: HighlightModel) {
         let highlightId = highlight.id
+
+        // Cancel all in-progress analyses for this highlight
+        // Stops API calls immediately rather than completing and discarding
+        cancelAllAnalysesForHighlight(highlightId)
 
         // Haptic feedback for tactile confirmation
         let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
@@ -620,6 +644,56 @@ final class ReaderViewModel {
     }
 
     // MARK: - AI Analysis
+
+    /// Cancel a SINGLE job by ID
+    /// Used for precise control - e.g., cancel only the currently streaming analysis
+    func cancelJob(_ jobId: UUID) {
+        cancelledJobs.insert(jobId)
+        #if DEBUG
+        print("[Cancel] Single job \(jobId.uuidString.prefix(8)) marked for cancellation")
+        #endif
+    }
+
+    /// Cancel ALL active analysis jobs for a highlight
+    /// Used when highlight is deleted - stops all parallel jobs, saves API resources
+    func cancelAllAnalysesForHighlight(_ highlightId: UUID) {
+        guard let jobIds = highlightToJobIds[highlightId], !jobIds.isEmpty else { return }
+
+        #if DEBUG
+        print("[Cancel] Cancelling \(jobIds.count) job(s) for highlight \(highlightId.uuidString.prefix(8))")
+        #endif
+
+        // Mark each job for cancellation - jobs will exit on next poll iteration
+        for jobId in jobIds {
+            cancelledJobs.insert(jobId)
+        }
+
+        // Immediately clean up UI map since highlight is being deleted
+        highlightToJobMap.removeValue(forKey: highlightId)
+    }
+
+    /// Cleanup job memory and tracking across all layers
+    /// Called from defer blocks to ensure consistent cleanup on any exit path
+    private func cleanupJob(_ jobId: UUID, forHighlight highlightId: UUID) {
+        // Clear job memory (API results, streaming buffer)
+        analysisJobManager.clearJob(jobId)
+
+        // Clear cancellation signal for this job
+        cancelledJobs.remove(jobId)
+
+        // Remove job from ownership tracking
+        highlightToJobIds[highlightId]?.remove(jobId)
+        if highlightToJobIds[highlightId]?.isEmpty == true {
+            highlightToJobIds.removeValue(forKey: highlightId)
+        }
+
+        // Clear UI map if this job was the displayed one
+        // Note: cancelAllAnalysesForHighlight clears this immediately, so this may be a no-op
+        if highlightToJobMap[highlightId] == jobId {
+            highlightToJobMap.removeValue(forKey: highlightId)
+        }
+    }
+
     func performAnalysis(type: AnalysisType, text: String, context: String, question: String? = nil) {
         guard let highlight = selectedHighlight else { return }
 
@@ -645,17 +719,17 @@ final class ReaderViewModel {
             chapterContext: currentChapter?.plainText,
             question: question
         )
-        highlightToJobMap[highlightId] = jobId
+
+        // Register job in tracking
+        highlightToJobMap[highlightId] = jobId                      // UI: latest job for streaming
+        highlightToJobIds[highlightId, default: []].insert(jobId)   // Ownership: all jobs for highlight
 
         // Poll for streaming updates and completion
         // Task inherits @MainActor context - state updates are automatic
         Task {
-            // Single cleanup point: defer ensures job memory is freed on ANY exit path
-            defer { analysisJobManager.clearJob(jobId) }
+            defer { cleanupJob(jobId, forHighlight: highlightId) }
 
-            // Check Task.isCancelled on each iteration to enable cancellation
-            // (e.g., when user navigates away during analysis)
-            while !Task.isCancelled {
+            while !cancelledJobs.contains(jobId) {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
                 // Synchronous call - no await needed (both are @MainActor)
@@ -695,24 +769,28 @@ final class ReaderViewModel {
                             )
                         }
                     }
-                    // Clean up job mapping only if this job is still the tracked one
-                    if highlightToJobMap[highlightId] == jobId {
-                        highlightToJobMap.removeValue(forKey: highlightId)
-                    }
-                    return
+                    return  // Exit → defer runs cleanupJob (handles UI map)
                 case .error:
-                    if selectedHighlight?.id == highlightId {
+                    // Check if this is the active job for this highlight
+                    // Prevents parallel job's error from disrupting newer job's state
+                    let isActiveJob = highlightToJobMap[highlightId] == jobId
+                    if selectedHighlight?.id == highlightId && isActiveJob {
                         analysisResult = "Error: \(job.error?.localizedDescription ?? "Unknown error")"
                         isAnalyzing = false
                     }
-                    // Only remove if this job is still the tracked one
-                    if highlightToJobMap[highlightId] == jobId {
-                        highlightToJobMap.removeValue(forKey: highlightId)
-                    }
-                    return
+                    return  // Exit → defer runs cleanupJob (handles UI map)
                 case .queued, .running:
                     continue
                 }
+            }
+
+            // Loop exited without returning (cancelled or job not found)
+            // Reset UI state if this was the active job for the selected highlight
+            // Note: Check BEFORE cleanupJob runs (defer), as cleanupJob clears the map
+            let wasActiveJob = highlightToJobMap[highlightId] == jobId
+            if wasActiveJob && selectedHighlight?.id == highlightId {
+                isAnalyzing = false
+                analysisResult = nil
             }
         }
     }
@@ -891,17 +969,17 @@ final class ReaderViewModel {
             history: history,
             priorAnalysisContext: priorAnalysisContext
         )
-        highlightToJobMap[highlightId] = jobId
+
+        // Register job in tracking
+        highlightToJobMap[highlightId] = jobId                      // UI: latest job for streaming
+        highlightToJobIds[highlightId, default: []].insert(jobId)   // Ownership: all jobs for highlight
 
         // Poll for streaming updates and completion
         // Task inherits @MainActor context - state updates are automatic
         Task {
-            // Single cleanup point: defer ensures job memory is freed on ANY exit path
-            defer { analysisJobManager.clearJob(jobId) }
+            defer { cleanupJob(jobId, forHighlight: highlightId) }
 
-            // Check Task.isCancelled on each iteration to enable cancellation
-            // (e.g., when user navigates away during analysis)
-            while !Task.isCancelled {
+            while !cancelledJobs.contains(jobId) {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
                 // Synchronous call - no await needed (both are @MainActor)
@@ -943,15 +1021,12 @@ final class ReaderViewModel {
                                     #if DEBUG
                                     print("[FollowUp] ABORTED: Analysis \(analysisId.uuidString.prefix(8)) was deleted during streaming")
                                     #endif
-                                    // Clean up: reset UI state if this was the active job
-                                    if highlightToJobMap[highlightId] == jobId {
-                                        highlightToJobMap.removeValue(forKey: highlightId)
-                                        if selectedHighlight?.id == highlightId {
-                                            isAnalyzing = false
-                                            analysisResult = nil
-                                        }
+                                    // Reset UI state if this was the active job
+                                    if highlightToJobMap[highlightId] == jobId && selectedHighlight?.id == highlightId {
+                                        isAnalyzing = false
+                                        analysisResult = nil
                                     }
-                                    return
+                                    return  // Exit → defer runs cleanupJob (handles UI map)
                                 }
                                 // Add turn to the analysis thread
                                 // Note: addTurnToThread has built-in duplicate detection to prevent
@@ -1041,17 +1116,11 @@ final class ReaderViewModel {
                             }
                         }
                     }
-                    // Clean up job mapping only if this job is still the tracked one
-                    if highlightToJobMap[highlightId] == jobId {
-                        highlightToJobMap.removeValue(forKey: highlightId)
-                    }
-                    // Reset input mode only if:
-                    // 1. This highlight is still selected
-                    // 2. This was the active job (prevents parallel job A from resetting mode while B is active)
+                    // Reset input mode if this was the active job
                     if selectedHighlight?.id == highlightId && isActiveJob {
                         followUpInputMode = .followUp
                     }
-                    return
+                    return  // Exit → defer runs cleanupJob (handles UI map)
                 case .error:
                     // Check if this is the active job for this highlight
                     // Prevents parallel job's error from disrupting newer job's state
@@ -1061,14 +1130,20 @@ final class ReaderViewModel {
                         isAnalyzing = false
                         followUpInputMode = .followUp
                     }
-                    // Only remove if this job is still the tracked one
-                    if highlightToJobMap[highlightId] == jobId {
-                        highlightToJobMap.removeValue(forKey: highlightId)
-                    }
-                    return
+                    return  // Exit → defer runs cleanupJob (handles UI map)
                 case .queued, .running:
                     continue
                 }
+            }
+
+            // Loop exited without returning (cancelled or job not found)
+            // Reset UI state if this was the active job for the selected highlight
+            // Note: Check BEFORE cleanupJob runs (defer), as cleanupJob clears the map
+            let wasActiveJob = highlightToJobMap[highlightId] == jobId
+            if wasActiveJob && selectedHighlight?.id == highlightId {
+                isAnalyzing = false
+                analysisResult = nil
+                followUpInputMode = .followUp
             }
         }
     }
