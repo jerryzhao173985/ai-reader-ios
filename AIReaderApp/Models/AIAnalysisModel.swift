@@ -7,7 +7,7 @@ import Foundation
 import SwiftData
 
 // MARK: - Analysis Types (matching web app)
-enum AnalysisType: String, Codable, CaseIterable, Identifiable {
+enum AnalysisType: String, Codable, CaseIterable, Identifiable, Sendable {
     case factCheck = "fact_check"
     case discussion = "discussion"
     case keyPoints = "key_points"

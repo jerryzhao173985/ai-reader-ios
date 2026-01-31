@@ -7,7 +7,8 @@
 import Foundation
 
 /// Configuration for OpenAI API
-struct AIConfiguration {
+/// Sendable: All members are value types or Sendable, safe to pass across isolation boundaries
+struct AIConfiguration: Sendable {
     var apiKey: String
     var baseURL: String
     var provider: SettingsManager.AIProvider
@@ -107,9 +108,10 @@ final class AIService {
     private let session: URLSession
 
     // MARK: - Errors
-    enum AIError: LocalizedError {
+    /// Sendable: All associated values are Strings (Sendable), safe to throw across isolation boundaries
+    enum AIError: LocalizedError, Sendable {
         case noAPIKey
-        case networkError(Error)
+        case networkError(String)  // String instead of Error for Sendable compliance
         case invalidResponse
         case apiError(String)
         case timeout
@@ -118,8 +120,8 @@ final class AIService {
             switch self {
             case .noAPIKey:
                 return "OpenAI API key not configured. Please add your API key in Settings."
-            case .networkError(let error):
-                return "Network error: \(error.localizedDescription)"
+            case .networkError(let message):
+                return "Network error: \(message)"
             case .invalidResponse:
                 return "Invalid response from AI service"
             case .apiError(let message):
@@ -138,6 +140,12 @@ final class AIService {
         sessionConfig.timeoutIntervalForRequest = configuration.timeoutSeconds
         sessionConfig.timeoutIntervalForResource = configuration.timeoutSeconds * 2
         self.session = URLSession(configuration: sessionConfig)
+    }
+
+    deinit {
+        // Clean up URLSession to prevent resource leaks
+        // invalidateAndCancel cancels outstanding tasks and releases session resources
+        session.invalidateAndCancel()
     }
 
     /// Whether web search is enabled for this session
@@ -394,7 +402,7 @@ final class AIService {
     /// Stream using the new OpenAI Responses API for GPT-5.2
     private func callResponsesAPIStreaming(prompt: String) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 guard !config.apiKey.isEmpty else {
                     continuation.finish(throwing: AIError.noAPIKey)
                     return
@@ -468,9 +476,10 @@ final class AIService {
 
                     // Check for non-200 response
                     if httpResponse.statusCode != 200 {
-                        // Try to read error body
+                        // Try to read error body (small responses, but check cancellation for consistency)
                         var errorBody = ""
                         for try await line in bytes.lines {
+                            guard !Task.isCancelled else { break }
                             errorBody += line
                         }
                         #if DEBUG
@@ -488,11 +497,17 @@ final class AIService {
                             let fallbackConfig = config.withFallback()
                             continuation.yield(.fallbackOccurred(modelId: fallbackConfig.model, webSearchEnabled: fallbackConfig.webSearchEnabled))
 
-                            let fallbackService = AIService(configuration: fallbackConfig)
-                            for try await event in fallbackService.callOpenAIStreaming(prompt: prompt) {
-                                continuation.yield(event)
+                            do {
+                                let fallbackService = AIService(configuration: fallbackConfig)
+                                for try await event in fallbackService.callOpenAIStreaming(prompt: prompt) {
+                                    // Cooperative cancellation: exit if outer Task was cancelled
+                                    guard !Task.isCancelled else { break }
+                                    continuation.yield(event)
+                                }
+                                continuation.finish()
+                            } catch {
+                                continuation.finish(throwing: error)
                             }
-                            continuation.finish()
                             return
                         }
 
@@ -504,6 +519,9 @@ final class AIService {
                     // Events: response.output_text.delta, response.output_text.done,
                     // response.web_search_call.* (when web search is enabled), etc.
                     for try await line in bytes.lines {
+                        // Cooperative cancellation: exit loop when Task is cancelled
+                        guard !Task.isCancelled else { break }
+
                         if line.hasPrefix("data: ") {
                             let jsonString = String(line.dropFirst(6))
 
@@ -581,6 +599,8 @@ final class AIService {
 
                             let fallbackService = AIService(configuration: fallbackConfig)
                             for try await event in fallbackService.callOpenAIStreaming(prompt: prompt) {
+                                // Cooperative cancellation: exit if outer Task was cancelled
+                                guard !Task.isCancelled else { break }
                                 continuation.yield(event)
                             }
                             continuation.finish()
@@ -590,8 +610,14 @@ final class AIService {
                         return
                     }
 
-                    continuation.finish(throwing: AIError.networkError(error))
+                    continuation.finish(throwing: AIError.networkError(error.localizedDescription))
                 }
+            }
+
+            // Enable cancellation propagation: when consumer stops iterating (or Task is cancelled),
+            // cancel the network task to free resources and stop unnecessary work
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
             }
         }
     }
@@ -601,7 +627,7 @@ final class AIService {
     /// Stream using the Chat Completions API for GPT-4o (proven stable fallback)
     private func callChatCompletionsStreaming(prompt: String) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 guard !config.apiKey.isEmpty else {
                     continuation.finish(throwing: AIError.noAPIKey)
                     return
@@ -650,6 +676,9 @@ final class AIService {
 
                     // Parse SSE stream for Chat Completions
                     for try await line in bytes.lines {
+                        // Cooperative cancellation: exit loop when Task is cancelled
+                        guard !Task.isCancelled else { break }
+
                         if line.hasPrefix("data: ") {
                             let jsonString = String(line.dropFirst(6))
 
@@ -669,8 +698,14 @@ final class AIService {
 
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: AIError.networkError(error))
+                    continuation.finish(throwing: AIError.networkError(error.localizedDescription))
                 }
+            }
+
+            // Enable cancellation propagation: when consumer stops iterating (or Task is cancelled),
+            // cancel the network task to free resources and stop unnecessary work
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
             }
         }
     }
@@ -843,7 +878,7 @@ final class AIService {
             }
         }
 
-        throw lastError.map { AIError.networkError($0) } ?? AIError.timeout
+        throw lastError.map { AIError.networkError($0.localizedDescription) } ?? AIError.timeout
     }
 
     private func parseChatCompletionsResponse(data: Data) throws -> String {
@@ -903,7 +938,7 @@ final class AIService {
             }
         }
 
-        throw lastError.map { AIError.networkError($0) } ?? AIError.timeout
+        throw lastError.map { AIError.networkError($0.localizedDescription) } ?? AIError.timeout
     }
 
     /// Parse Responses API response
@@ -1068,7 +1103,8 @@ final class AnalysisJobManager {
             streaming: streaming
         )
 
-        Task {
+        // Named task for debugging: shows in Instruments and LLDB (Swift 6.2+)
+        Task(name: "AIJob: \(type.displayName) [\(jobId.uuidString.prefix(8))]") {
             if streaming {
                 // Streaming path: UI updates during processing (existing behavior)
                 await runJobStreaming(
@@ -1131,6 +1167,9 @@ final class AnalysisJobManager {
             var updateCounter = 0
 
             for try await event in aiService.callOpenAIStreaming(prompt: prompt) {
+                // Cooperative cancellation: exit if job was cancelled
+                guard !Task.isCancelled else { break }
+
                 switch event {
                 case .content(let chunk):
                     chunks.append(chunk)

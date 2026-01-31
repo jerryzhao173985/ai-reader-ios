@@ -60,7 +60,8 @@ struct ChapterContentView: View {
                                     viewModel.selectHighlight(highlight)
 
                                     // Clear scroll ID after a short delay to allow re-scrolling
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
                                         viewModel.scrollToHighlightId = nil
                                     }
                                 },
@@ -419,7 +420,7 @@ struct ChapterWebView: UIViewRepresentable {
             )
 
             // Notify that we handled the update
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.onMarkerUpdateHandled()
             }
 
@@ -445,14 +446,14 @@ struct ChapterWebView: UIViewRepresentable {
 
             // Clear any pending undo restore - the new chapter HTML already includes the highlight
             if pendingUndoRestore != nil {
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.onUndoRestoreHandled()
                 }
             }
 
             // Clear any pending marker update from old chapter - prevents stale JS injection
             if pendingMarkerUpdate != nil {
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.onMarkerUpdateHandled()
                 }
             }
@@ -479,7 +480,7 @@ struct ChapterWebView: UIViewRepresentable {
             )
 
             // Notify that we handled the undo restore
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.onUndoRestoreHandled()
             }
 
@@ -1221,7 +1222,8 @@ struct ChapterWebView: UIViewRepresentable {
             print("[WebView] Scroll restoration: \(targetOffset) (source: \(source))")
             #endif
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 100_000_000)  // 0.1 seconds
                 // If user started scrolling during the delay, pendingScrollPosition was cleared
                 // Respect user's scroll intent by skipping restoration
                 guard self?.pendingScrollPosition != nil else {
@@ -1256,7 +1258,7 @@ struct ChapterWebView: UIViewRepresentable {
                 let contextBefore = body["contextBefore"] as? String ?? ""
                 let contextAfter = body["contextAfter"] as? String ?? ""
 
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.parent.onTextSelected(
                         text,
                         NSRange(location: startOffset, length: endOffset - startOffset),
@@ -1270,7 +1272,7 @@ struct ChapterWebView: UIViewRepresentable {
                     if let highlight = parent.highlights.first(where: {
                         $0.id.uuidString.replacingOccurrences(of: "-", with: "") == cleanId
                     }) {
-                        DispatchQueue.main.async {
+                        Task { @MainActor in
                             self.parent.onHighlightTapped(highlight)
                         }
                     }

@@ -179,6 +179,13 @@ final class ReaderViewModel {
         loadHighlightsForCurrentChapter()
     }
 
+    // Swift 6.2: isolated deinit ensures cleanup runs on MainActor's executor
+    // This is the correct pattern for @MainActor classes (replaces MainActor.assumeIsolated)
+    // See SE-0371: Isolated synchronous deinit
+    isolated deinit {
+        undoTimer?.invalidate()
+    }
+
     // MARK: - Content Detection
     /// Finds the first chapter with substantial content, skipping front matter
     private func findFirstContentChapter() -> Int {
@@ -283,11 +290,10 @@ final class ReaderViewModel {
     func updateScrollPosition(_ offset: CGFloat) {
         scrollOffset = offset
         // Debounce save - in production, use Combine debounce
+        // Task inherits @MainActor context from this class - no MainActor.run needed
         Task {
             try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
-            await MainActor.run {
-                saveProgress()
-            }
+            saveProgress()
         }
     }
 
@@ -654,6 +660,25 @@ final class ReaderViewModel {
         #endif
     }
 
+    /// Cancel ALL active analysis jobs across all highlights
+    /// Used when view disappears to free resources and stop unnecessary work
+    func cancelAllActiveJobs() {
+        let allJobIds = highlightToJobIds.values.flatMap { $0 }
+        guard !allJobIds.isEmpty else { return }
+
+        #if DEBUG
+        print("[Cancel] Cancelling all \(allJobIds.count) active job(s) on view disappear")
+        #endif
+
+        // Mark all jobs for cancellation - jobs will exit on next poll iteration
+        for jobId in allJobIds {
+            cancelledJobs.insert(jobId)
+        }
+
+        // Clear UI maps - highlight views are disappearing anyway
+        highlightToJobMap.removeAll()
+    }
+
     /// Cancel ALL active analysis jobs for a highlight
     /// Used when highlight is deleted - stops all parallel jobs, saves API resources
     func cancelAllAnalysesForHighlight(_ highlightId: UUID) {
@@ -726,10 +751,14 @@ final class ReaderViewModel {
 
         // Poll for streaming updates and completion
         // Task inherits @MainActor context - state updates are automatic
-        Task {
+        // Named task for debugging: shows in Instruments and LLDB (Swift 6.2+)
+        Task(name: "Analysis: \(type.displayName) [\(highlightId.uuidString.prefix(8))]") {
             defer { cleanupJob(jobId, forHighlight: highlightId) }
 
-            while !cancelledJobs.contains(jobId) {
+            // Two-layer cancellation for defense-in-depth:
+            // 1. cancelledJobs - signal-based for granular job control
+            // 2. Task.isCancelled - cooperative cancellation when parent Task is cancelled
+            while !cancelledJobs.contains(jobId) && !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
                 // Synchronous call - no await needed (both are @MainActor)
@@ -976,10 +1005,14 @@ final class ReaderViewModel {
 
         // Poll for streaming updates and completion
         // Task inherits @MainActor context - state updates are automatic
-        Task {
+        // Named task for debugging: shows in Instruments and LLDB (Swift 6.2+)
+        Task(name: "FollowUp: [\(highlightId.uuidString.prefix(8))]") {
             defer { cleanupJob(jobId, forHighlight: highlightId) }
 
-            while !cancelledJobs.contains(jobId) {
+            // Two-layer cancellation for defense-in-depth:
+            // 1. cancelledJobs - signal-based for granular job control
+            // 2. Task.isCancelled - cooperative cancellation when parent Task is cancelled
+            while !cancelledJobs.contains(jobId) && !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
 
                 // Synchronous call - no await needed (both are @MainActor)

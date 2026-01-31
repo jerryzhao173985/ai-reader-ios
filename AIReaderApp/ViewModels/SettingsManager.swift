@@ -10,7 +10,7 @@ final class SettingsManager {
     // MARK: - AI Provider
     /// AI model provider selection
     /// GPT-5.2 uses the new Responses API, GPT-4o uses Chat Completions API
-    enum AIProvider: String, CaseIterable, Identifiable {
+    enum AIProvider: String, CaseIterable, Identifiable, Sendable {
         case gpt5_2 = "gpt-5.2"
         case gpt4o = "gpt-4o"
 
@@ -52,7 +52,7 @@ final class SettingsManager {
     // MARK: - Reasoning Effort
     /// Controls how much reasoning the model performs before responding
     /// Only applicable to GPT-5.2 (Responses API)
-    enum ReasoningEffort: String, CaseIterable, Identifiable {
+    enum ReasoningEffort: String, CaseIterable, Identifiable, Sendable {
         case none = "none"
         case low = "low"
         case medium = "medium"
@@ -83,7 +83,7 @@ final class SettingsManager {
     }
 
     // MARK: - Theme
-    enum Theme: String, CaseIterable, Identifiable {
+    enum Theme: String, CaseIterable, Identifiable, Sendable {
         case light
         case dark
         case sepia
@@ -139,7 +139,7 @@ final class SettingsManager {
     }
 
     // MARK: - Font Family
-    enum FontFamily: String, CaseIterable, Identifiable {
+    enum FontFamily: String, CaseIterable, Identifiable, Sendable {
         case serif = "Georgia"
         case sansSerif = "System"
         case monospace = "Menlo"

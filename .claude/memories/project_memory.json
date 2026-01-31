@@ -17,13 +17,13 @@
     },
     {
       "type": "technical",
-      "content": "Concurrency & Job Tracking (Precise Control Model): AnalysisJobManager is @MainActor final class. Three-layer tracking: (1) UI layer: highlightToJobMap[UUID:UUID] - LATEST job for streaming display, (2) Ownership layer: highlightToJobIds[UUID:Set<UUID>] - ALL jobs per highlight, (3) Cancellation layer: cancelledJobs Set<UUID> - specific jobs to stop. Functions: cancelJob(jobId) for single job, cancelAllAnalysesForHighlight(highlightId) for all. Polling loop checks cancelledJobs.contains(jobId). cleanupJob() handles ALL layers via defer (memory, cancellation signal, ownership, UI map). CRITICAL: After polling loop exits (cancelled/break), must reset UI state (isAnalyzing=false, analysisResult=nil) if wasActiveJob. isActiveJob guard prevents background jobs from hijacking UI. Timer callbacks require explicit MainActor hop.",
-      "added_at": "2026-01-30T02:25:00.000000"
+      "content": "Swift 6.2 Concurrency (iOS 26+): Three-layer job tracking: (1) UI layer: highlightToJobMap - latest job for streaming, (2) Ownership layer: highlightToJobIds - all jobs per highlight, (3) Cancellation layer: cancelledJobs Set. Polling uses two-layer cancellation: cancelledJobs.contains(jobId) && !Task.isCancelled (defense-in-depth). cleanupJob() handles all layers via defer. AsyncThrowingStream pattern: capture Task in variable, add onTermination handler to cancel task. CRITICAL: Task.isCancelled checks needed in ALL streaming loops INCLUDING fallback loops - unstructured Tasks do NOT propagate cancellation to inner Tasks (only async let and TaskGroup do). DEINIT: Use `isolated deinit` (SE-0371) for @MainActor classes - NOT MainActor.assumeIsolated. AIService.deinit calls session.invalidateAndCancel() (thread-safe, no isolation needed). SENDABLE: Explicit conformance on AIConfiguration, AIError, StreamEvent, NonStreamingResult, and all enums (AnalysisType, AIProvider, ReasoningEffort, Theme, FontFamily). AIError.networkError uses String (not Error) for Sendable compliance. Tasks created from @MainActor classes inherit isolation - no MainActor.run needed. DispatchQueue.main.async → Task { @MainActor in }. [weak self] RULES: Required for Tasks with delays in NSObject/Coordinator classes; NOT applicable to SwiftUI structs (value types) or immediate Tasks.",
+      "added_at": "2026-01-31T17:15:00.000000"
     },
     {
       "type": "decision",
-      "content": "State & UX Patterns: (1) Atomic State Transitions: Update all related state variables together. (2) State Symmetry: All deselection/deletion/mode-change paths clear full state set. (3) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight; isActiveJob guard prevents non-active job completions from resetting UI state. (4) Operation Symmetry: saveAnalysis(), selectAnalysis(), deleteAnalysis() all update colorHex and trigger pendingMarkerUpdate. (5) HighlightsView: In-place expansion preferred over reader navigation. (6) Job Isolation Pattern: prepareForNewCustomQuestion() clears job mapping to orphan ongoing jobs. (7) Web search tool_choice: Use 'auto' (default), NOT 'required'. (8) Settings Access Pattern: Settings gear only in LibraryView, not in ReaderView. User must exit book to change settings, so config is always fresh when book opens.",
-      "added_at": "2026-01-28T14:50:00.000000"
+      "content": "State & UX Patterns: (1) Atomic State Transitions: Update all related state variables together. (2) State Symmetry: All deselection/deletion/mode-change paths clear full state set. (3) Race Condition Guards: highlightToJobMap tracks ONE active job per highlight; isActiveJob guard prevents non-active job completions from resetting UI state. (4) Operation Symmetry: saveAnalysis(), selectAnalysis(), deleteAnalysis() all update colorHex and trigger pendingMarkerUpdate. (5) HighlightsView: In-place expansion preferred over reader navigation. (6) Job Isolation Pattern: prepareForNewCustomQuestion() clears job mapping to orphan ongoing jobs. (7) Background Job Completion Intent: User WANTS jobs to continue after HighlightDetailSheet dismisses AND after closing book - analysis saves to SwiftData when complete, available next time user opens that highlight. NO onDisappear cancellation. cancelAllActiveJobs() exists but intentionally not called on view disappear. (8) Settings Access Pattern: Settings gear only in LibraryView. User must exit book to change settings, so config is always fresh when book opens.",
+      "added_at": "2026-01-31T15:30:00.000000"
     },
     {
       "type": "convention",
@@ -39,5 +39,5 @@
   "manual_memories": [],
   "realtime_memories": [],
   "created_at": "2026-01-20T02:42:32.320251",
-  "updated_at": "2026-01-30T08:06:09.828945"
+  "updated_at": "2026-01-31T18:00:00.000000"
 }

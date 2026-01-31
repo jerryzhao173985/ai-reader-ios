@@ -867,7 +867,8 @@ struct AnalysisPanelView: View {
             // Select the highlight (loads its analysis and opens panel)
             viewModel.selectHighlight(highlight)
             // Clear scroll ID after a short delay to allow re-scrolling if tapped again
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
                 viewModel.scrollToHighlightId = nil
             }
         } label: {
