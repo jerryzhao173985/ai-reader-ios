@@ -12,6 +12,7 @@ struct ReaderView: View {
 
     @Environment(SettingsManager.self) private var settings
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var viewModel: ReaderViewModel?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -140,6 +141,17 @@ struct ReaderView: View {
                     }
             }
             .presentationDetents([.medium, .large])
+        }
+        // Save progress when app goes to background (defense-in-depth)
+        // Ensures no progress loss if debounce timer hasn't fired yet
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background || newPhase == .inactive {
+                viewModel.saveProgress()
+            }
+        }
+        // Save progress when view disappears (catches swipe-back gestures)
+        .onDisappear {
+            viewModel.saveProgress()
         }
     }
 

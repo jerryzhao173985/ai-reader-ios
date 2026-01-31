@@ -862,15 +862,8 @@ struct AnalysisPanelView: View {
 
     private func chapterHighlightRow(_ highlight: HighlightModel) -> some View {
         Button {
-            // Trigger scroll to this highlight in the reader view
-            viewModel.scrollToHighlightId = highlight.id
-            // Select the highlight (loads its analysis and opens panel)
+            // Select and scroll to highlight (scrollTo defaults to true)
             viewModel.selectHighlight(highlight)
-            // Clear scroll ID after a short delay to allow re-scrolling if tapped again
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
-                viewModel.scrollToHighlightId = nil
-            }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 Text(highlight.selectedText)

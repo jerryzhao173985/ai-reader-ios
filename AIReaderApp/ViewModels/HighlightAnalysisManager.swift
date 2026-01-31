@@ -205,7 +205,7 @@ final class HighlightAnalysisManager {
         // Check Task.isCancelled on each iteration to enable cancellation
         // (e.g., when user navigates away during analysis)
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05s
+            try? await Task.sleep(for: .milliseconds(50))  // Smoother streaming updates
 
             // Synchronous call - no await needed (both are @MainActor)
             guard let job = jobManager.getJob(jobId) else { break }
@@ -260,7 +260,7 @@ final class HighlightAnalysisManager {
         // Check Task.isCancelled on each iteration to enable cancellation
         // (e.g., when user navigates away during analysis)
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 50_000_000)
+            try? await Task.sleep(for: .milliseconds(50))  // Smoother streaming updates
 
             // Synchronous call - no await needed (both are @MainActor)
             guard let job = jobManager.getJob(jobId) else { break }

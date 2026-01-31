@@ -388,6 +388,7 @@ final class AIService {
     /// Call OpenAI with streaming, yielding partial responses as they arrive
     /// Automatically selects the appropriate API based on provider configuration
     /// Returns StreamEvent to communicate both content and metadata (like fallback notifications)
+    /// Note: All thrown errors are AIError - callers can pattern match for specific handling
     func callOpenAIStreaming(prompt: String) -> AsyncThrowingStream<StreamEvent, Error> {
         switch config.provider {
         case .gpt5_2:
@@ -859,7 +860,7 @@ final class AIService {
                     return try parseChatCompletionsResponse(data: data)
                 } else if httpResponse.statusCode == 429 {
                     let delay = pow(2.0, Double(attempt)) * 1.0
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    try await Task.sleep(for: .seconds(delay))
                     continue
                 } else {
                     if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -874,7 +875,7 @@ final class AIService {
             } catch {
                 lastError = error
                 let delay = pow(2.0, Double(attempt)) * 0.5
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try await Task.sleep(for: .seconds(delay))
             }
         }
 
@@ -914,7 +915,7 @@ final class AIService {
                     return try parseResponsesAPIResponse(data: data)
                 } else if httpResponse.statusCode == 429 {
                     let delay = pow(2.0, Double(attempt)) * 1.0
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    try await Task.sleep(for: .seconds(delay))
                     continue
                 } else {
                     if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -934,7 +935,7 @@ final class AIService {
             } catch {
                 lastError = error
                 let delay = pow(2.0, Double(attempt)) * 0.5
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try await Task.sleep(for: .seconds(delay))
             }
         }
 

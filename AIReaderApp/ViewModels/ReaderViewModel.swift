@@ -9,7 +9,7 @@ import UIKit
 
 /// Input mode for the follow-up input box in AnalysisPanelView
 /// Controls placeholder text and submit behavior
-enum FollowUpInputMode: Equatable {
+enum FollowUpInputMode: Equatable, Sendable {
     case followUp       // Normal follow-up to existing analysis
     case askQuestion    // New custom question (no existing analysis selected)
     case addComment     // Adding a comment (no AI call, just user text)
@@ -48,7 +48,14 @@ final class ReaderViewModel {
     /// Timer to auto-clear undo state after timeout
     private var undoTimer: Timer?
 
+    // Debounce Tasks (cancel-and-replace pattern for true debounce)
+    /// Task for debounced progress saves - only final scroll position triggers save
+    private var progressSaveTask: Task<Void, Never>?
+    /// Task for clearing scroll target after highlight navigation completes
+    private var scrollTargetClearTask: Task<Void, Never>?
+
     /// Data structure to store deleted highlight for undo
+    /// Note: Safe without Sendable - only accessed within @MainActor-isolated ReaderViewModel
     struct DeletedHighlightData {
         let chapterIndex: Int
         let selectedText: String
@@ -184,6 +191,26 @@ final class ReaderViewModel {
     // See SE-0371: Isolated synchronous deinit
     isolated deinit {
         undoTimer?.invalidate()
+        progressSaveTask?.cancel()
+        scrollTargetClearTask?.cancel()
+        // Safety net: save progress if deinit occurs during debounce window
+        // This catches swipe-back gestures and unexpected dismissals
+        saveProgressSync()
+    }
+
+    /// Synchronous save for use in deinit (can't await in deinit)
+    /// Only saves if there's actual progress to save (avoids unnecessary writes)
+    private func saveProgressSync() {
+        guard let progress = book.readingProgress else { return }
+        // Only save if position changed from stored value
+        let currentChapter = currentChapterIndex
+        let currentOffset = scrollOffset
+        if progress.chapterIndex != currentChapter || abs(progress.scrollOffset - currentOffset) > 10 {
+            progress.chapterIndex = currentChapter
+            progress.scrollOffset = currentOffset
+            progress.lastUpdated = Date()
+            try? modelContext.save()
+        }
     }
 
     // MARK: - Content Detection
@@ -289,11 +316,16 @@ final class ReaderViewModel {
 
     func updateScrollPosition(_ offset: CGFloat) {
         scrollOffset = offset
-        // Debounce save - in production, use Combine debounce
-        // Task inherits @MainActor context from this class - no MainActor.run needed
-        Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
-            saveProgress()
+        // True debounce: cancel previous task, start new one
+        // Only the LAST scroll position triggers save (efficient, no wasted saves)
+        progressSaveTask?.cancel()
+        progressSaveTask = Task(name: "Progress Save Debounce") {
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+                saveProgress()
+            } catch {
+                // Cancelled - user still scrolling
+            }
         }
     }
 
@@ -575,6 +607,16 @@ final class ReaderViewModel {
             print("[DeleteAnalysis] DEFERRED marker update - hasActiveTextSelection=true")
             #endif
         } else {
+            // Guard: Only save if color actually changed (matches selectAnalysis() pattern)
+            // Prevents redundant DB writes when deleting non-selected analysis
+            guard highlight.colorHex != newColorHex else {
+                #if DEBUG
+                print("[DeleteAnalysis] Color unchanged: \(newColorHex) - skipping save")
+                #endif
+                pendingMarkerUpdate = markerUpdate  // Still trigger JS update for count change
+                return
+            }
+
             // Safe to update colorHex now - no active selection to disrupt
             let oldColorHex = highlight.colorHex
             highlight.colorHex = newColorHex
@@ -759,7 +801,7 @@ final class ReaderViewModel {
             // 1. cancelledJobs - signal-based for granular job control
             // 2. Task.isCancelled - cooperative cancellation when parent Task is cancelled
             while !cancelledJobs.contains(jobId) && !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
+                try? await Task.sleep(for: .milliseconds(50))  // Smoother streaming updates
 
                 // Synchronous call - no await needed (both are @MainActor)
                 guard let job = analysisJobManager.getJob(jobId) else { break }
@@ -872,6 +914,16 @@ final class ReaderViewModel {
             print("[SaveAnalysis] DEFERRED colorHex update for highlight \(highlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
             #endif
         } else {
+            // Guard: Only save if color actually changed (matches selectAnalysis() pattern)
+            // Prevents redundant DB write when analysis type matches existing color
+            guard highlight.colorHex != type.colorHex else {
+                #if DEBUG
+                print("[SaveAnalysis] Color unchanged: \(type.colorHex) - skipping second save")
+                #endif
+                pendingMarkerUpdate = markerUpdate  // Still trigger JS update for count change
+                return
+            }
+
             // Safe to update colorHex now - no active selection to disrupt
             let oldColor = highlight.colorHex
             highlight.colorHex = type.colorHex
@@ -1013,7 +1065,7 @@ final class ReaderViewModel {
             // 1. cancelledJobs - signal-based for granular job control
             // 2. Task.isCancelled - cooperative cancellation when parent Task is cancelled
             while !cancelledJobs.contains(jobId) && !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 50_000_000)  // 0.05 second for smoother streaming
+                try? await Task.sleep(for: .milliseconds(50))  // Smoother streaming updates
 
                 // Synchronous call - no await needed (both are @MainActor)
                 guard let job = analysisJobManager.getJob(jobId) else { break }
@@ -1256,8 +1308,30 @@ final class ReaderViewModel {
     }
 
     // MARK: - Highlight Selection
-    /// Selects a highlight and loads its most recent analysis for display
-    func selectHighlight(_ highlight: HighlightModel) {
+
+    /// Clears scroll target after delay, enabling re-tap to scroll to same highlight
+    private func clearScrollTargetDebounced() {
+        scrollTargetClearTask?.cancel()
+        scrollTargetClearTask = Task(name: "Scroll Target Clear Debounce") {
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+                scrollToHighlightId = nil
+            } catch {
+                // Cancelled - user tapped different highlight
+            }
+        }
+    }
+
+    /// Selects a highlight for viewing, optionally scrolling the reader to it
+    /// - Parameters:
+    ///   - highlight: The highlight to select
+    ///   - scrollTo: If true (default), scrolls the reader to this highlight
+    func selectHighlight(_ highlight: HighlightModel, scrollTo: Bool = true) {
+        // Set scroll target and schedule debounced clear (allows re-tap to scroll again)
+        if scrollTo {
+            scrollToHighlightId = highlight.id
+            clearScrollTargetDebounced()
+        }
         // Look up the highlight from currentChapterHighlights to get fresh data with analyses loaded
         // The passed highlight from WebView may have stale/unloaded relationships
         let targetId = highlight.id

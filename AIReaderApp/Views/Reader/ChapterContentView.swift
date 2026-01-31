@@ -55,15 +55,8 @@ struct ChapterContentView: View {
                                     }
                                 },
                                 onHighlightTapped: { highlight in
-                                    // Scroll to the highlight and open panel
-                                    viewModel.scrollToHighlightId = highlight.id
+                                    // Select and scroll to highlight (scrollTo defaults to true)
                                     viewModel.selectHighlight(highlight)
-
-                                    // Clear scroll ID after a short delay to allow re-scrolling
-                                    Task { @MainActor in
-                                        try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
-                                        viewModel.scrollToHighlightId = nil
-                                    }
                                 },
                                 onScrollChanged: { offset in
                                     viewModel.updateScrollPosition(offset)
@@ -1223,7 +1216,7 @@ struct ChapterWebView: UIViewRepresentable {
             #endif
 
             Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 100_000_000)  // 0.1 seconds
+                try? await Task.sleep(for: .milliseconds(100))  // Brief delay for layout
                 // If user started scrolling during the delay, pendingScrollPosition was cleared
                 // Respect user's scroll intent by skipping restoration
                 guard self?.pendingScrollPosition != nil else {
