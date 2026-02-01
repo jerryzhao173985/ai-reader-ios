@@ -67,9 +67,13 @@ struct ChapterContentView: View {
                                 onUndoRestoreHandled: {
                                     viewModel.pendingUndoRestore = nil
                                 },
+                                onNewHighlightHandled: {
+                                    viewModel.pendingNewHighlight = nil
+                                },
                                 scrollToHighlightId: viewModel.scrollToHighlightId?.uuidString,
                                 pendingMarkerUpdate: viewModel.pendingMarkerUpdate,
                                 pendingUndoRestore: viewModel.pendingUndoRestore,
+                                pendingNewHighlight: viewModel.pendingNewHighlight,
                                 hasActiveTextSelection: viewModel.hasActiveTextSelection
                             )
                             .frame(minHeight: UIScreen.main.bounds.height - 200)
@@ -306,6 +310,8 @@ struct ChapterWebView: UIViewRepresentable {
     let onMarkerUpdateHandled: () -> Void
     /// Callback to clear pending undo restore after it's been handled
     let onUndoRestoreHandled: () -> Void
+    /// Callback to clear pending new highlight after it's been handled
+    let onNewHighlightHandled: () -> Void
 
     /// Highlight ID to scroll to (when marker is tapped externally)
     var scrollToHighlightId: String?
@@ -317,6 +323,10 @@ struct ChapterWebView: UIViewRepresentable {
     /// Pending undo restore - inject highlight via JS instead of HTML reload to avoid flicker
     /// Used when undoing a deleted highlight
     var pendingUndoRestore: (highlightId: UUID, startOffset: Int, endOffset: Int, markerIndex: Int, analysisCount: Int, colorHex: String)?
+
+    /// Pending new highlight - inject via JS instead of HTML reload to avoid flash on creation
+    /// Same structure as pendingUndoRestore - both use the same JS injection logic
+    var pendingNewHighlight: (highlightId: UUID, startOffset: Int, endOffset: Int, markerIndex: Int, analysisCount: Int, colorHex: String)?
 
     /// When true, skip HTML reloads to preserve user's text selection
     /// Any pending updates will be applied when this becomes false
@@ -451,6 +461,13 @@ struct ChapterWebView: UIViewRepresentable {
                 }
             }
 
+            // Clear any pending new highlight from old chapter - already included in new chapter HTML
+            if pendingNewHighlight != nil {
+                Task { @MainActor in
+                    self.onNewHighlightHandled()
+                }
+            }
+
             #if DEBUG
             print("[WebView] Chapter change - loading new content, length: \(styledHTML.count)")
             #endif
@@ -480,8 +497,34 @@ struct ChapterWebView: UIViewRepresentable {
             #if DEBUG
             print("[WebView] Undo restore via JS injection - no HTML reload")
             #endif
+        } else if let newHighlight = pendingNewHighlight, hasStructuralChange {
+            // New highlight - use JS injection to add highlight without HTML reload
+            // This avoids the flash/blink caused by loadHTMLString
+            // Uses same injectHighlightRestore function since the DOM manipulation is identical
+            context.coordinator.lastStyledContentHash = styledContentHash
+            context.coordinator.lastHighlightIds = currentHighlightIds
+
+            context.coordinator.injectHighlightRestore(
+                webView: webView,
+                highlightId: newHighlight.highlightId,
+                startOffset: newHighlight.startOffset,
+                endOffset: newHighlight.endOffset,
+                markerIndex: newHighlight.markerIndex,
+                analysisCount: newHighlight.analysisCount,
+                colorHex: newHighlight.colorHex
+            )
+
+            // Notify that we handled the new highlight
+            Task { @MainActor in
+                self.onNewHighlightHandled()
+            }
+
+            #if DEBUG
+            print("[WebView] New highlight via JS injection - no HTML reload flash")
+            #endif
         } else if needsHtmlReload {
             // Same chapter, structural change (new/removed highlight) - preserve scroll position
+            // This path is now only for highlight DELETION (pendingNewHighlight and pendingUndoRestore not set)
             context.coordinator.lastStyledContentHash = styledContentHash
             context.coordinator.lastHighlightIds = currentHighlightIds
             context.coordinator.saveScrollPositionForReload()
@@ -1048,10 +1091,10 @@ struct ChapterWebView: UIViewRepresentable {
                     return false;
                 }
 
-                // Update background color on ALL highlight spans
+                // Update styles on ALL highlight spans - must use full border-bottom, not just color
                 highlights.forEach(function(highlight) {
                     highlight.style.backgroundColor = '\(colorHex)40';
-                    highlight.style.borderBottomColor = '\(colorHex)';
+                    highlight.style.borderBottom = '2px solid \(colorHex)';
                 });
 
                 // Find existing marker (could be highlight-marker-N from initial HTML or analysis-marker from previous JS)
@@ -1118,6 +1161,10 @@ struct ChapterWebView: UIViewRepresentable {
             let cleanId = highlightId.uuidString.replacingOccurrences(of: "-", with: "")
             let js = """
             (function() {
+                // Clear native iOS text selection to remove blue underline
+                // Without this, the selection persists after highlight creation
+                window.getSelection().removeAllRanges();
+
                 // First, renumber all existing markers that are >= markerIndex
                 // They need to shift up by 1 to make room for the restored highlight
                 document.querySelectorAll('sup[class^="highlight-marker-"]').forEach(function(marker) {
@@ -1159,10 +1206,13 @@ struct ChapterWebView: UIViewRepresentable {
                     });
                 });
 
-                // Update the color for the restored highlight
+                // Apply full styles matching CSS from generateStyledHTML()
+                // Must set complete border-bottom, not just color - color alone doesn't create a border
                 highlights.forEach(function(el) {
                     el.style.backgroundColor = '\(colorHex)40';
-                    el.style.borderBottomColor = '\(colorHex)';
+                    el.style.borderBottom = '2px solid \(colorHex)';
+                    el.style.cursor = 'pointer';
+                    el.style.position = 'relative';
                 });
 
                 return true;

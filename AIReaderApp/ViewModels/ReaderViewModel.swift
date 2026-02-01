@@ -81,6 +81,10 @@ final class ReaderViewModel {
     /// Pending undo restore data for JS injection (avoids HTML reload flicker)
     var pendingUndoRestore: (highlightId: UUID, startOffset: Int, endOffset: Int, markerIndex: Int, analysisCount: Int, colorHex: String)?
 
+    /// Pending new highlight for JS injection (avoids HTML reload flash on creation)
+    /// Same structure as pendingUndoRestore - both use injectHighlightRestore for DOM insertion
+    var pendingNewHighlight: (highlightId: UUID, startOffset: Int, endOffset: Int, markerIndex: Int, analysisCount: Int, colorHex: String)?
+
     // AI Analysis
     let analysisJobManager = AnalysisJobManager()
     var currentAnalysisType: AnalysisType?
@@ -377,6 +381,26 @@ final class ReaderViewModel {
         try? modelContext.save()
 
         loadHighlightsForCurrentChapter()
+
+        // Calculate marker index for JS injection (1-based, sorted by startOffset)
+        // This enables smooth highlight insertion without HTML reload flash
+        let sortedHighlights = currentChapterHighlights.sorted { $0.startOffset < $1.startOffset }
+        let markerIndex = (sortedHighlights.firstIndex(where: { $0.id == highlight.id }) ?? 0) + 1
+
+        // Set pending new highlight for JS injection (same pattern as undo restore)
+        pendingNewHighlight = (
+            highlightId: highlight.id,
+            startOffset: startOffset,
+            endOffset: endOffset,
+            markerIndex: markerIndex,
+            analysisCount: 0,  // New highlight has no analyses yet
+            colorHex: highlight.colorHex
+        )
+
+        #if DEBUG
+        print("[CreateHighlight] Set pendingNewHighlight: id=\(highlight.id.uuidString.prefix(8)), marker=[\(markerIndex)]")
+        #endif
+
         return highlight
     }
 
