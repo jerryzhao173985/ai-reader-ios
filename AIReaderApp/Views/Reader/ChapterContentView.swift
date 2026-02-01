@@ -546,11 +546,32 @@ struct ChapterWebView: UIViewRepresentable {
             context.coordinator.clearPendingScrollForNavigation()
 
             let cleanId = highlightId.replacingOccurrences(of: "-", with: "")
+            // Smart scroll positioning when analysis panel opens at .medium (50% height):
+            // - WKWebView viewport already excludes toolbar (SwiftUI safe area handling)
+            // - Visible reading area = top 50% of WebView (0% to 50%)
+            // - Short highlights: CENTER in visible area (25% from top)
+            // - Long highlights: TOP-ALIGN at 0% so user reads from beginning
             let js = """
             (function() {
                 const el = document.querySelector('.highlight-\(cleanId)');
                 if (el) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const rect = el.getBoundingClientRect();
+                    const highlightHeight = rect.height;
+                    // Visible area = top half of viewport (bottom half covered by panel)
+                    const visibleHeight = window.innerHeight * 0.5;
+
+                    let scrollOffset;
+                    if (highlightHeight <= visibleHeight) {
+                        // SHORT: Center highlight in visible area
+                        const highlightCenter = rect.top + (highlightHeight / 2);
+                        const visibleCenter = visibleHeight / 2;
+                        scrollOffset = highlightCenter - visibleCenter;
+                    } else {
+                        // LONG: Align top of highlight to top of viewport
+                        scrollOffset = rect.top;
+                    }
+
+                    window.scrollBy({ top: scrollOffset, behavior: 'smooth' });
                     return true;
                 }
                 return false;
