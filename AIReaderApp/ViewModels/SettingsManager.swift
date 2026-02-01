@@ -238,6 +238,15 @@ final class SettingsManager {
         }
     }
 
+    /// When true, shows the note editor box in the analysis panel
+    /// Allows users to add personal notes to highlights (distinct from AI analysis)
+    /// Default: false for minimal design - users can enable if they want note-taking
+    var showNoteEditor: Bool {
+        didSet {
+            UserDefaults.standard.set(showNoteEditor, forKey: Keys.showNoteEditor)
+        }
+    }
+
     // MARK: - Keys
     private enum Keys {
         static let theme = "settings.theme"
@@ -250,6 +259,7 @@ final class SettingsManager {
         static let aiAutoFallback = "settings.aiAutoFallback"
         static let reasoningEffort = "settings.reasoningEffort"
         static let webSearchEnabled = "settings.webSearchEnabled"
+        static let showNoteEditor = "settings.showNoteEditor"
     }
 
     // MARK: - Computed Properties
@@ -316,6 +326,13 @@ final class SettingsManager {
         } else {
             self.webSearchEnabled = false  // Off by default
         }
+
+        // Load note editor setting (default false - minimal design, opt-in feature)
+        if defaults.object(forKey: Keys.showNoteEditor) != nil {
+            self.showNoteEditor = defaults.bool(forKey: Keys.showNoteEditor)
+        } else {
+            self.showNoteEditor = false  // Off by default for minimal design
+        }
     }
 
     // MARK: - Reset
@@ -325,6 +342,7 @@ final class SettingsManager {
         fontSize = 18
         lineSpacing = 8
         marginSize = 20
+        showNoteEditor = false  // Default to minimal design
     }
 }
 

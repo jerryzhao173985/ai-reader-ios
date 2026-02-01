@@ -19,7 +19,7 @@ enum FollowUpInputMode: Equatable, Sendable {
 @Observable
 final class ReaderViewModel {
     // MARK: - Properties
-    private let modelContext: ModelContext
+    let modelContext: ModelContext
 
     // Book State
     let book: BookModel
@@ -65,6 +65,7 @@ final class ReaderViewModel {
         let endOffset: Int
         let colorHex: String
         let markerIndex: Int  // 1-based marker number for undo restoration
+        let note: String?  // User's personal note on the highlight
         let analyses: [DeletedAnalysisData]
 
         struct DeletedAnalysisData {
@@ -444,6 +445,7 @@ final class ReaderViewModel {
             endOffset: highlight.endOffset,
             colorHex: highlight.colorHex,
             markerIndex: markerIndex,
+            note: highlight.note,
             analyses: analysesData
         )
 
@@ -498,6 +500,7 @@ final class ReaderViewModel {
             endOffset: data.endOffset
         )
         highlight.colorHex = data.colorHex
+        highlight.note = data.note  // Restore user's personal note
         highlight.book = book
         modelContext.insert(highlight)
 

@@ -15,6 +15,7 @@ struct HighlightsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedAnalysisType: AnalysisType?
+    @State private var showNotesOnly: Bool = false  // Filter to show only highlights with notes
     @State private var searchText = ""
     @State private var showingExportOptions = false
     @State private var exportDocument: HighlightsExportDocument?
@@ -22,18 +23,54 @@ struct HighlightsView: View {
     /// Highlight selected for detail view (shows analyses in sheet)
     @State private var selectedHighlightForDetail: HighlightModel?
 
-    private var filteredHighlights: [HighlightModel] {
-        var highlights = book.highlights.sorted(by: { $0.createdAt > $1.createdAt })
-
-        if !searchText.isEmpty {
-            highlights = highlights.filter {
-                $0.selectedText.localizedCaseInsensitiveContains(searchText)
-            }
+    /// Base highlights after search filter (before type/notes filters)
+    /// Used to calculate counts that reflect current search results
+    private var searchFilteredHighlights: [HighlightModel] {
+        if searchText.isEmpty {
+            return book.highlights
         }
+        return book.highlights.filter {
+            $0.selectedText.localizedCaseInsensitiveContains(searchText)
+        }
+    }
 
+    /// Count of highlights that have notes (respects search filter)
+    private var notesCount: Int {
+        searchFilteredHighlights.filter { highlight in
+            if let note = highlight.note { return !note.isEmpty }
+            return false
+        }.count
+    }
+
+    /// Count of highlights with the currently selected analysis type
+    /// Used to auto-reset filter when all highlights of that type are deleted
+    private var selectedAnalysisTypeCount: Int {
+        guard let type = selectedAnalysisType else { return 0 }
+        return highlightCount(for: type)
+    }
+
+    /// Count of highlights containing a specific analysis type (respects search filter)
+    private func highlightCount(for type: AnalysisType) -> Int {
+        searchFilteredHighlights.filter { highlight in
+            highlight.analyses.contains { $0.analysisType == type }
+        }.count
+    }
+
+    private var filteredHighlights: [HighlightModel] {
+        var highlights = searchFilteredHighlights.sorted(by: { $0.createdAt > $1.createdAt })
+
+        // Filter by analysis type (mutually exclusive with notes filter)
         if let type = selectedAnalysisType {
             highlights = highlights.filter {
                 $0.analyses.contains(where: { $0.analysisType == type })
+            }
+        }
+
+        // Filter to show only highlights with notes
+        if showNotesOnly {
+            highlights = highlights.filter { highlight in
+                if let note = highlight.note { return !note.isEmpty }
+                return false
             }
         }
 
@@ -97,6 +134,20 @@ struct HighlightsView: View {
             ) { result in
                 exportDocument = nil
             }
+            .onChange(of: notesCount) { _, newCount in
+                // Auto-reset Notes filter when all notes are deleted
+                // Prevents orphaned filter state where chip is gone but filter is active
+                if newCount == 0 && showNotesOnly {
+                    showNotesOnly = false
+                }
+            }
+            .onChange(of: selectedAnalysisTypeCount) { _, newCount in
+                // Auto-reset analysis type filter when all highlights of that type are deleted
+                // Same logic as Notes filter - return to "All" when filtered category becomes empty
+                if newCount == 0 && selectedAnalysisType != nil {
+                    selectedAnalysisType = nil
+                }
+            }
         }
     }
 
@@ -104,21 +155,41 @@ struct HighlightsView: View {
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                // "All" filter - shows all highlights
                 FilterChip(
                     title: "All",
-                    isSelected: selectedAnalysisType == nil,
+                    isSelected: selectedAnalysisType == nil && !showNotesOnly,
                     color: settings.theme.accentColor
                 ) {
                     selectedAnalysisType = nil
+                    showNotesOnly = false
                 }
 
+                // Analysis type filters - only show types that have highlights
                 ForEach(AnalysisType.allCases, id: \.self) { type in
+                    let count = highlightCount(for: type)
+                    if count > 0 {
+                        FilterChip(
+                            title: "\(type.displayName) (\(count))",
+                            isSelected: selectedAnalysisType == type,
+                            color: Color(hex: type.colorHex) ?? settings.theme.accentColor
+                        ) {
+                            selectedAnalysisType = type
+                            showNotesOnly = false  // Mutually exclusive
+                        }
+                    }
+                }
+
+                // Notes filter - shows only highlights with personal notes
+                // Only show chip if there are highlights with notes
+                if notesCount > 0 {
                     FilterChip(
-                        title: type.displayName,
-                        isSelected: selectedAnalysisType == type,
-                        color: Color(hex: type.colorHex) ?? settings.theme.accentColor
+                        title: "Notes (\(notesCount))",
+                        isSelected: showNotesOnly,
+                        color: .orange
                     ) {
-                        selectedAnalysisType = type
+                        showNotesOnly = true
+                        selectedAnalysisType = nil  // Mutually exclusive
                     }
                 }
             }
@@ -161,29 +232,56 @@ struct HighlightsView: View {
     }
 
     // MARK: - Empty State
+    /// Whether any filter is active (analysis type or notes)
+    private var hasActiveFilter: Bool {
+        selectedAnalysisType != nil || showNotesOnly || !searchText.isEmpty
+    }
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
 
-            Image(systemName: "highlighter")
+            Image(systemName: emptyStateIcon)
                 .font(.system(size: 50))
                 .foregroundStyle(settings.theme.textColor.opacity(0.3))
 
-            Text(searchText.isEmpty && selectedAnalysisType == nil
-                 ? "No Highlights Yet"
-                 : "No Matching Highlights")
+            Text(hasActiveFilter
+                 ? "No Matching Highlights"
+                 : "No Highlights Yet")
                 .font(.headline)
                 .foregroundStyle(settings.theme.textColor.opacity(0.5))
 
-            Text(searchText.isEmpty && selectedAnalysisType == nil
-                 ? "Highlight text while reading to save and analyze passages."
-                 : "Try adjusting your search or filters.")
+            Text(emptyStateMessage)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
 
             Spacer()
+        }
+    }
+
+    /// Icon for empty state - reflects the active filter type
+    private var emptyStateIcon: String {
+        if let type = selectedAnalysisType {
+            return type.iconName
+        } else if showNotesOnly {
+            return "note.text"
+        } else {
+            return "highlighter"
+        }
+    }
+
+    private var emptyStateMessage: String {
+        // Note: Filter-specific cases (showNotesOnly, selectedAnalysisType) are not needed because:
+        // - Filter chips only appear when their count > 0
+        // - onChange auto-resets filters when count becomes 0
+        // - Therefore active filters always guarantee filteredHighlights has results
+        // The only way to see empty state with a filter is via search (which is handled below)
+        if !searchText.isEmpty {
+            return "No results. Try a different search term."
+        } else {
+            return "Highlight text while reading to save and analyze passages."
         }
     }
 
@@ -338,6 +436,26 @@ struct HighlightRow: View {
                 .foregroundStyle(settings.theme.textColor)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
+
+            // Note preview (if exists)
+            if let note = highlight.note, !note.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "note.text")
+                        .font(.caption2)
+                        .foregroundStyle(highlightColor)
+
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(settings.theme.textColor.opacity(0.8))
+                        .lineLimit(1)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(highlightColor.opacity(0.1))
+                )
+            }
 
             // Metadata
             HStack(spacing: 8) {
@@ -565,6 +683,21 @@ struct HighlightDetailSheet: View {
             )
             .animation(.easeInOut(duration: 0.2), value: manager?.selectedAnalysis?.id)
             .animation(.easeInOut(duration: 0.2), value: manager?.currentAnalysisType)
+
+            // Personal note - always shown in HighlightsView (comprehensive management view)
+            // The showNoteEditor setting only applies to AnalysisPanelView for minimal reading UX
+            NoteEditor(
+                note: Binding(
+                    get: { highlight.note },
+                    set: { newValue in
+                        highlight.note = newValue
+                        try? modelContext.save()
+                    }
+                ),
+                accentColor: currentDisplayColor,
+                backgroundColor: settings.theme.secondaryBackgroundColor,
+                textColor: settings.theme.textColor
+            )
 
             // Analysis type buttons - enables creating new analyses from library view
             analysisTypeButtonsSection

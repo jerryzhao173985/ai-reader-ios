@@ -29,6 +29,7 @@
 		F675B0E0414AA2B4447BE2AB /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FEB38F1F1C5DE058A513392 /* LibraryViewModel.swift */; };
 		F75C3C49C4993A9646B5DCA2 /* AnalysisPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36CC54D2F8D7C7912C048435 /* AnalysisPanelView.swift */; };
 		SAMPLEBOOK001EPB1234567890 /* SampleBook.epub in Resources */ = {isa = PBXBuildFile; fileRef = SAMPLEBOOK002EPF1234567890 /* SampleBook.epub */; };
+		NOTEEDITOR001BUILDFILE1234 /* NoteEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = NOTEEDITOR001FILEREF12345 /* NoteEditor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,6 +55,7 @@
 		D787154F8120BC37DA5B65E7 /* AIReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIReaderApp.swift; sourceTree = "<group>"; };
 		F0392037AEE3669918B3A15C /* ChapterContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterContentView.swift; sourceTree = "<group>"; };
 		SAMPLEBOOK002EPF1234567890 /* SampleBook.epub */ = {isa = PBXFileReference; lastKnownFileType = file; path = SampleBook.epub; sourceTree = "<group>"; };
+		NOTEEDITOR001FILEREF12345 /* NoteEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -188,6 +190,7 @@
 		E7C09C829EB210F4B8CF31E6 /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				NOTEEDITOR001FILEREF12345 /* NoteEditor.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -283,6 +286,7 @@
 				C282F53A74BCC4818FB1B196 /* AIReaderApp.swift in Sources */,
 				7D5F8DD2E50A6241364BC7C7 /* AIService.swift in Sources */,
 				F75C3C49C4993A9646B5DCA2 /* AnalysisPanelView.swift in Sources */,
+				NOTEEDITOR001BUILDFILE1234 /* NoteEditor.swift in Sources */,
 				7D9F36C5EB6672FAA25991B8 /* BookModel.swift in Sources */,
 				D11DFEEDAF266D6E61B85736 /* ChapterContentView.swift in Sources */,
 				F28A5917D846F226CC9CEA30 /* ContentView.swift in Sources */,

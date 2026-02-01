@@ -22,6 +22,7 @@ struct SettingsView: View {
                     fontSizeSlider
                     lineSpacingSlider
                     marginSizeSlider
+                    showNoteEditorToggle
                 }
 
                 // Preview Section
@@ -323,6 +324,22 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Auto-Fallback")
                 Text("Use GPT-4o if selected model fails")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Show Note Editor Toggle
+    @MainActor
+    private var showNoteEditorToggle: some View {
+        Toggle(isOn: Binding(
+            get: { settings.showNoteEditor },
+            set: { settings.showNoteEditor = $0 }
+        )) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Note Editor")
+                Text("Show note box for personal annotations")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

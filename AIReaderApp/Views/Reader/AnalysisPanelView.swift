@@ -196,6 +196,23 @@ struct AnalysisPanelView: View {
             // Selected text box - styled with colored bar + border to match HighlightsView pattern
             quoteBlock(highlight: highlight)
 
+            // Personal note - quick annotation distinct from AI analysis
+            // Only shown when enabled in settings (opt-in for minimal design)
+            if settings.showNoteEditor {
+                NoteEditor(
+                    note: Binding(
+                        get: { highlight.note },
+                        set: { newValue in
+                            highlight.note = newValue
+                            try? viewModel.modelContext.save()
+                        }
+                    ),
+                    accentColor: Color(hex: highlight.colorHex) ?? settings.theme.accentColor,
+                    backgroundColor: settings.theme.secondaryBackgroundColor,
+                    textColor: settings.theme.textColor
+                )
+            }
+
             // Quick Analysis Buttons + Ask Question + Delete
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
