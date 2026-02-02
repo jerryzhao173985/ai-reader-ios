@@ -39,7 +39,11 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(settings.theme.colorScheme)
-        .sheet(isPresented: $showingSettings) {
+        .sheet(isPresented: $showingSettings, onDismiss: {
+            // Refresh library when Settings sheet dismisses
+            // This catches books restored from ArchivedBooksView
+            libraryViewModel.loadBooks()
+        }) {
             SettingsView()
                 .environment(settings)
         }

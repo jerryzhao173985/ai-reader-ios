@@ -38,6 +38,11 @@ final class BookModel {
     var dateAdded: Date
     var lastOpened: Date?
 
+    // MARK: - Archive State
+    /// When true, book is hidden from main library but preserved with all data
+    /// Property-level default enables SwiftData lightweight migration
+    var isArchived: Bool = false
+
     // MARK: - Computed Properties
     var authorDisplay: String {
         authors.isEmpty ? "Unknown Author" : authors.joined(separator: ", ")

@@ -1,7 +1,7 @@
 // LibraryView.swift
 // Grid view displaying all books in the library
 //
-// Features: book grid, import, delete, progress display, highlights access
+// Features: book grid, import, archive, progress display, highlights access
 
 import SwiftUI
 import SwiftData
@@ -135,9 +135,9 @@ struct LibraryView: View {
                         Divider()
 
                         Button(role: .destructive) {
-                            viewModel.deleteBook(book)
+                            viewModel.archiveBook(book)
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label("Archive", systemImage: "archivebox")
                         }
                     }
                 }
@@ -245,8 +245,8 @@ struct BookCardView: View {
             ZStack {
                 LinearGradient(
                     colors: [
-                        Color(hue: Double(book.title.hashValue % 360) / 360, saturation: 0.5, brightness: 0.7),
-                        Color(hue: Double(book.title.hashValue % 360) / 360, saturation: 0.6, brightness: 0.5)
+                        Color(hue: Double(abs(book.title.hashValue) % 360) / 360, saturation: 0.5, brightness: 0.7),
+                        Color(hue: Double(abs(book.title.hashValue) % 360) / 360, saturation: 0.6, brightness: 0.5)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing

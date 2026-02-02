@@ -14,7 +14,12 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            ZStack {
+                // Navigation container background - prevents white edges when pushing views
+                settings.theme.backgroundColor
+                    .ignoresSafeArea(.all)
+
+                Form {
                 // Appearance Section
                 Section("Appearance") {
                     themePicker
@@ -43,6 +48,19 @@ struct SettingsView: View {
                     Text("Your API key is stored locally and never shared. GPT-5.2 uses the new Responses API with advanced reasoning and optional web search. GPT-4o is the proven stable option.")
                 }
 
+                // Library Section
+                Section {
+                    NavigationLink {
+                        ArchivedBooksView()
+                            .environment(settings)
+                            .background(settings.theme.backgroundColor)
+                    } label: {
+                        Label("Archived Books", systemImage: "archivebox")
+                    }
+                } header: {
+                    Text("Library")
+                }
+
                 // Reset Section
                 Section {
                     Button("Reset to Defaults") {
@@ -63,8 +81,13 @@ struct SettingsView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            } // ZStack
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(settings.theme.backgroundColor, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(settings.theme == .dark ? .dark : .light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {

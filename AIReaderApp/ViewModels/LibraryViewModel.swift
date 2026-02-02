@@ -1,7 +1,7 @@
 // LibraryViewModel.swift
 // ViewModel for the Library view managing book collection
 //
-// Handles book importing, deletion, and library state
+// Handles book importing, archiving, and library state
 
 import SwiftUI
 import SwiftData
@@ -15,6 +15,7 @@ final class LibraryViewModel {
     private let epubParser = EPUBParserService()
 
     var books: [BookModel] = []
+    var archivedBooks: [BookModel] = []
     var isLoading = false
     var errorMessage: String?
     var showingError = false
@@ -29,7 +30,9 @@ final class LibraryViewModel {
 
     // MARK: - Book Loading
     func loadBooks() {
+        // Fetch only non-archived books for main library
         let descriptor = FetchDescriptor<BookModel>(
+            predicate: #Predicate<BookModel> { $0.isArchived == false },
             sortBy: [SortDescriptor(\.lastOpened, order: .reverse), SortDescriptor(\.dateAdded, order: .reverse)]
         )
 
@@ -37,6 +40,21 @@ final class LibraryViewModel {
             books = try modelContext.fetch(descriptor)
         } catch {
             errorMessage = "Failed to load books: \(error.localizedDescription)"
+            showingError = true
+        }
+    }
+
+    /// Loads only archived books for the Archived Books view
+    func loadArchivedBooks() {
+        let descriptor = FetchDescriptor<BookModel>(
+            predicate: #Predicate<BookModel> { $0.isArchived == true },
+            sortBy: [SortDescriptor(\.lastOpened, order: .reverse), SortDescriptor(\.dateAdded, order: .reverse)]
+        )
+
+        do {
+            archivedBooks = try modelContext.fetch(descriptor)
+        } catch {
+            errorMessage = "Failed to load archived books: \(error.localizedDescription)"
             showingError = true
         }
     }
@@ -90,22 +108,69 @@ final class LibraryViewModel {
         }
     }
 
-    // MARK: - Book Deletion
-    func deleteBook(_ book: BookModel) {
-        // Delete associated files
-        if let sourcePath = book.sourceFilePath {
-            let bookDir = URL(fileURLWithPath: sourcePath).deletingLastPathComponent()
-            try? FileManager.default.removeItem(at: bookDir)
-        }
-
-        // Delete from database
-        modelContext.delete(book)
+    // MARK: - Book Archive
+    /// Archives a book (hides from library, preserves all data including highlights and analyses)
+    func archiveBook(_ book: BookModel) {
+        book.isArchived = true
 
         do {
             try modelContext.save()
             loadBooks()
         } catch {
-            errorMessage = "Failed to delete book: \(error.localizedDescription)"
+            // Revert the change since save failed
+            book.isArchived = false
+            errorMessage = "Failed to archive book: \(error.localizedDescription)"
+            showingError = true
+        }
+    }
+
+    /// Restores an archived book to the main library
+    func unarchiveBook(_ book: BookModel) {
+        book.isArchived = false
+
+        do {
+            try modelContext.save()
+            loadArchivedBooks()
+            loadBooks()
+        } catch {
+            // Revert the change since save failed
+            book.isArchived = true
+            errorMessage = "Failed to restore book: \(error.localizedDescription)"
+            showingError = true
+        }
+    }
+
+    /// Permanently deletes a book and all associated data (highlights, analyses, chapters)
+    /// This is irreversible - only available for archived books
+    func permanentlyDeleteBook(_ book: BookModel) {
+        // Capture ID before delete (defensive: avoids accessing deleted object properties)
+        let bookId = book.id
+
+        // Delete from database FIRST (cascades to highlights, analyses, chapters, etc.)
+        // This ensures if save fails, we haven't deleted files yet
+        modelContext.delete(book)
+
+        do {
+            try modelContext.save()
+
+            // Only delete files AFTER successful database commit
+            // Book files are stored at Documents/Books/{book.id}/ (NOT sourceFilePath!)
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let bookDirectory = documentsPath
+                .appendingPathComponent("Books")
+                .appendingPathComponent(bookId.uuidString)
+
+            if FileManager.default.fileExists(atPath: bookDirectory.path) {
+                try? FileManager.default.removeItem(at: bookDirectory)
+            }
+
+            loadArchivedBooks()
+        } catch {
+            // Discard the pending deletion (restores book to clean state in context)
+            // Without rollback, book.isDeleted remains true and could be committed by a later save
+            modelContext.rollback()
+            loadArchivedBooks()
+            errorMessage = "Failed to delete book"
             showingError = true
         }
     }
@@ -154,6 +219,9 @@ final class LibraryViewModel {
         // First, copy any bundled books to Documents
         copyBundledBooksToDocuments()
 
+        // Load archived books to check against (avoid re-importing archived books)
+        loadArchivedBooks()
+
         let fileManager = FileManager.default
         guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return
@@ -169,11 +237,20 @@ final class LibraryViewModel {
             let epubFiles = contents.filter { $0.pathExtension.lowercased() == "epub" }
 
             for epubURL in epubFiles {
-                // Check if we've already imported this file
+                // Check if we've already imported this file (including archived books)
+                // Use exact filename matching to avoid false positives
                 let fileName = epubURL.lastPathComponent
-                let alreadyImported = books.contains { book in
-                    book.sourceFilePath?.contains(fileName) == true ||
-                    book.title.lowercased() == fileName.replacingOccurrences(of: ".epub", with: "").lowercased()
+                let allBooks = books + archivedBooks
+                let alreadyImported = allBooks.contains { book in
+                    // Extract filename from stored sourceFilePath for exact comparison
+                    if let sourcePath = book.sourceFilePath {
+                        let storedFileName = URL(fileURLWithPath: sourcePath).lastPathComponent
+                        if storedFileName == fileName {
+                            return true
+                        }
+                    }
+                    // Fallback: match by title (for books imported before path tracking)
+                    return book.title.lowercased() == fileName.replacingOccurrences(of: ".epub", with: "").lowercased()
                 }
 
                 if !alreadyImported {
