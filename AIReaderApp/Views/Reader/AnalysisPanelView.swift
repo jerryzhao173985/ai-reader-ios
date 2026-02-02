@@ -108,6 +108,24 @@ struct AnalysisPanelView: View {
                         }
                     }
                 }
+                .onChange(of: viewModel.scrollToAnalysisOnHighlightChange) { _, shouldScroll in
+                    // ViewModel signals when to reset scroll after highlight change
+                    // This avoids observing the entire selectedHighlight object (which causes lag)
+                    guard shouldScroll, let analysis = viewModel.selectedAnalysis else {
+                        if shouldScroll {
+                            // No analysis - scroll to top
+                            var transaction = Transaction()
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) {
+                                proxy.scrollTo("analysis-content-top", anchor: .top)
+                            }
+                            viewModel.scrollToAnalysisOnHighlightChange = false
+                        }
+                        return
+                    }
+                    scrollToAnalysisId = analysis.id
+                    viewModel.scrollToAnalysisOnHighlightChange = false
+                }
             }
 
             // Follow-up Question Input

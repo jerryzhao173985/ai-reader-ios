@@ -990,6 +990,10 @@ struct ChapterWebView: UIViewRepresentable {
 
                 function attachHighlightClickHandlers() {
                     document.querySelectorAll('[class^="highlight-"]').forEach(el => {
+                        // Guard: Skip if click handler already attached (prevents duplicate listeners)
+                        if (el.dataset.clickAttached) return;
+                        el.dataset.clickAttached = 'true';
+
                         el.addEventListener('click', function(e) {
                             let highlightId = null;
 
@@ -1218,9 +1222,11 @@ struct ChapterWebView: UIViewRepresentable {
                     return false;
                 }
 
-                // Attach click handlers to the new highlight
+                // Attach click handlers to the new highlight (with guard to prevent duplicates)
                 const highlights = document.querySelectorAll('.highlight-\(cleanId)');
                 highlights.forEach(function(el) {
+                    if (el.dataset.clickAttached) return;
+                    el.dataset.clickAttached = 'true';
                     el.addEventListener('click', function(e) {
                         e.stopPropagation();
                         window.webkit.messageHandlers.highlightTapped.postMessage({id: '\(cleanId)'});

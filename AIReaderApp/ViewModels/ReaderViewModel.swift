@@ -41,6 +41,8 @@ final class ReaderViewModel {
     var selectedHighlight: HighlightModel?
     /// Request to scroll reader to a specific highlight (used by AnalysisPanelView)
     var scrollToHighlightId: UUID?
+    /// Signal to reset analysis panel scroll when switching highlights (avoids observing full model)
+    var scrollToAnalysisOnHighlightChange = false
 
     // Undo Delete
     /// Stores deleted highlight data for undo functionality
@@ -1354,6 +1356,12 @@ final class ReaderViewModel {
     ///   - highlight: The highlight to select
     ///   - scrollTo: If true (default), scrolls the reader to this highlight
     func selectHighlight(_ highlight: HighlightModel, scrollTo: Bool = true) {
+        // Track if switching from one highlight to another (for scroll reset)
+        // Only reset when: panel already open with highlight A, user taps highlight B
+        // View recreation handles: first selection, reopening after close (natural scroll reset)
+        let previousHighlightId = selectedHighlight?.id
+        let isSwitchingHighlight = previousHighlightId != nil && previousHighlightId != highlight.id
+
         // Set scroll target and schedule debounced clear (allows re-tap to scroll again)
         if scrollTo {
             scrollToHighlightId = highlight.id
@@ -1416,6 +1424,12 @@ final class ReaderViewModel {
         followUpInputMode = .followUp
 
         showingAnalysisPanel = true
+
+        // Signal view to reset scroll position when switching highlights
+        // Must be set AFTER selectedAnalysis is updated so view can read it
+        if isSwitchingHighlight {
+            scrollToAnalysisOnHighlightChange = true
+        }
     }
 
     // MARK: - Comment Management
