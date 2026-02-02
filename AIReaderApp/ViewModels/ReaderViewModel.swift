@@ -1356,11 +1356,11 @@ final class ReaderViewModel {
     ///   - highlight: The highlight to select
     ///   - scrollTo: If true (default), scrolls the reader to this highlight
     func selectHighlight(_ highlight: HighlightModel, scrollTo: Bool = true) {
-        // Track if switching from one highlight to another (for scroll reset)
-        // Only reset when: panel already open with highlight A, user taps highlight B
-        // View recreation handles: first selection, reopening after close (natural scroll reset)
+        // Track if selecting a different highlight (for scroll reset)
+        // Reset scroll when: switching highlights OR selecting after X closed previous
+        // Only skip when re-tapping the same highlight (scroll position should persist)
         let previousHighlightId = selectedHighlight?.id
-        let isSwitchingHighlight = previousHighlightId != nil && previousHighlightId != highlight.id
+        let isSwitchingHighlight = previousHighlightId != highlight.id
 
         // Set scroll target and schedule debounced clear (allows re-tap to scroll again)
         if scrollTo {

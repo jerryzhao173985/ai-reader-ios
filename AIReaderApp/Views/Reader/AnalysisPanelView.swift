@@ -134,6 +134,12 @@ struct AnalysisPanelView: View {
             }
         }
         .background(settings.theme.secondaryBackgroundColor)
+        .onAppear {
+            // Reset scroll flag on view appear to ensure clean state
+            // Prevents bug: if sheet was dismissed while flag=true, reopening leaves flag stale
+            // Then next highlight switch sets flag=true (no change), onChange won't fire
+            viewModel.scrollToAnalysisOnHighlightChange = false
+        }
     }
 
     // MARK: - Header
