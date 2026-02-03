@@ -25,12 +25,18 @@ struct HighlightsView: View {
 
     /// Base highlights after search filter (before type/notes filters)
     /// Used to calculate counts that reflect current search results
+    /// Note search is controlled by settings.searchIncludesNotes (default OFF)
     private var searchFilteredHighlights: [HighlightModel] {
         if searchText.isEmpty {
             return book.highlights
         }
-        return book.highlights.filter {
-            $0.selectedText.localizedCaseInsensitiveContains(searchText)
+        return book.highlights.filter { highlight in
+            // Always search highlight text
+            let matchesText = highlight.selectedText.localizedCaseInsensitiveContains(searchText)
+            // Optionally search notes if setting is enabled
+            let matchesNote = settings.searchIncludesNotes &&
+                (highlight.note?.localizedCaseInsensitiveContains(searchText) ?? false)
+            return matchesText || matchesNote
         }
     }
 

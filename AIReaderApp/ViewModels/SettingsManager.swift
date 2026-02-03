@@ -247,6 +247,14 @@ final class SettingsManager {
         }
     }
 
+    /// When true, search in HighlightsView also searches note content
+    /// Default: false - only search highlight text (original behavior)
+    var searchIncludesNotes: Bool {
+        didSet {
+            UserDefaults.standard.set(searchIncludesNotes, forKey: Keys.searchIncludesNotes)
+        }
+    }
+
     // MARK: - Keys
     private enum Keys {
         static let theme = "settings.theme"
@@ -260,6 +268,7 @@ final class SettingsManager {
         static let reasoningEffort = "settings.reasoningEffort"
         static let webSearchEnabled = "settings.webSearchEnabled"
         static let showNoteEditor = "settings.showNoteEditor"
+        static let searchIncludesNotes = "settings.searchIncludesNotes"
     }
 
     // MARK: - Computed Properties
@@ -333,6 +342,13 @@ final class SettingsManager {
         } else {
             self.showNoteEditor = false  // Off by default for minimal design
         }
+
+        // Load search includes notes setting (default false - original behavior)
+        if defaults.object(forKey: Keys.searchIncludesNotes) != nil {
+            self.searchIncludesNotes = defaults.bool(forKey: Keys.searchIncludesNotes)
+        } else {
+            self.searchIncludesNotes = false  // Off by default for original behavior
+        }
     }
 
     // MARK: - Reset
@@ -343,6 +359,7 @@ final class SettingsManager {
         lineSpacing = 8
         marginSize = 20
         showNoteEditor = false  // Default to minimal design
+        searchIncludesNotes = false  // Default to original behavior
     }
 }
 

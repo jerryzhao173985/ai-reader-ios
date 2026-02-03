@@ -28,6 +28,7 @@ struct SettingsView: View {
                     lineSpacingSlider
                     marginSizeSlider
                     showNoteEditorToggle
+                    searchIncludesNotesToggle
                 }
 
                 // Preview Section
@@ -363,6 +364,22 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Note Editor")
                 Text("Show note box for personal annotations")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Search Includes Notes Toggle
+    @MainActor
+    private var searchIncludesNotesToggle: some View {
+        Toggle(isOn: Binding(
+            get: { settings.searchIncludesNotes },
+            set: { settings.searchIncludesNotes = $0 }
+        )) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Search Notes")
+                Text("Include note content when searching highlights")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

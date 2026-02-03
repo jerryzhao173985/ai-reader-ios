@@ -5,6 +5,7 @@
 // Design: Tap to expand → edit → tap outside to collapse (auto-saves)
 
 import SwiftUI
+import UIKit
 
 /// Inline note editor with collapsed/expanded states
 /// - Collapsed: Shows note text or placeholder, tap to expand
@@ -60,7 +61,8 @@ struct NoteEditor: View {
             localText = note ?? ""
             isEditing = true
             // Delay focus to allow animation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(100))
                 isFocused = true
             }
         } label: {
@@ -138,7 +140,9 @@ struct NoteEditor: View {
                 }
                 .onChange(of: localText) { _, newValue in
                     // Auto-save as user types (debounced by SwiftUI)
-                    note = newValue.isEmpty ? nil : newValue
+                    // Trim whitespace to avoid saving blank notes
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    note = trimmed.isEmpty ? nil : trimmed
                 }
 
             // Clear button (only if text exists)
@@ -182,9 +186,15 @@ struct NoteEditor: View {
     }
 
     private func saveAndClose() {
-        note = localText.isEmpty ? nil : localText
+        // Guard against double-call from onChange(of: isFocused)
+        guard isEditing else { return }
+
+        let trimmed = localText.trimmingCharacters(in: .whitespacesAndNewlines)
+        note = trimmed.isEmpty ? nil : trimmed
         isEditing = false
         isFocused = false
+        // Light haptic feedback on save
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 }
 
