@@ -101,7 +101,7 @@ struct NonStreamingResult: Sendable {
 }
 
 /// Service for performing AI analysis on text selections
-@Observable
+/// Note: No @Observable needed - only has `let` properties set in init (nothing to observe)
 final class AIService {
     // MARK: - Properties
     private let config: AIConfiguration

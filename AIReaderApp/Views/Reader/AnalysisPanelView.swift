@@ -819,12 +819,18 @@ struct AnalysisPanelView: View {
 
     // MARK: - Chapter Highlights Section
     /// Filtered highlights based on search text
+    /// Respects searchIncludesNotes setting (same logic as HighlightsView)
     private var filteredChapterHighlights: [HighlightModel] {
         let sorted = viewModel.currentChapterHighlights.sorted(by: { $0.startOffset < $1.startOffset })
         if highlightSearchText.isEmpty {
             return sorted
         }
-        return sorted.filter { $0.selectedText.localizedCaseInsensitiveContains(highlightSearchText) }
+        return sorted.filter { highlight in
+            let matchesText = highlight.selectedText.localizedCaseInsensitiveContains(highlightSearchText)
+            let matchesNote = settings.searchIncludesNotes &&
+                (highlight.note?.localizedCaseInsensitiveContains(highlightSearchText) ?? false)
+            return matchesText || matchesNote
+        }
     }
 
     private var chapterHighlightsSection: some View {

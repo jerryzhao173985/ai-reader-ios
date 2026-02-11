@@ -74,7 +74,10 @@ final class HighlightAnalysisManager {
 
         // Poll for streaming updates
         // Task inherits @MainActor context - state updates are automatic
-        Task {
+        // Named task for Instruments debugging (matches ReaderViewModel pattern)
+        // NOTE: Don't cancel previous Tasks - they must run to completion to save results
+        // The activeJobId check inside pollJob() handles UI isolation without losing data
+        Task(name: "LibraryAnalysis: \(type.displayName) [\(highlight.id.uuidString.prefix(8))]") {
             await pollJob(jobId: jobId, type: type, question: question)
         }
     }
@@ -134,7 +137,9 @@ final class HighlightAnalysisManager {
 
         // Poll for streaming updates
         // Task inherits @MainActor context - state updates are automatic
-        Task {
+        // Named task for Instruments debugging (matches ReaderViewModel pattern)
+        // NOTE: Don't cancel previous Tasks - they must run to completion to save results
+        Task(name: "LibraryFollowUp: [\(highlight.id.uuidString.prefix(8))]") {
             await pollFollowUpJob(jobId: jobId, question: question, analysisToFollowUpId: analysisToFollowUpId)
         }
     }
@@ -146,9 +151,11 @@ final class HighlightAnalysisManager {
         analysisResult = nil
         isAnalyzing = false
 
-        // Update highlight color to match analysis type
-        highlight.colorHex = analysis.analysisType.colorHex
-        try? modelContext.save()
+        // Update highlight color to match analysis type (only save if changed)
+        if highlight.colorHex != analysis.analysisType.colorHex {
+            highlight.colorHex = analysis.analysisType.colorHex
+            try? modelContext.save()
+        }
     }
 
     /// Delete an analysis
@@ -167,6 +174,10 @@ final class HighlightAnalysisManager {
         // If analyses remain, select most recent
         if let mostRecent = highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt }).first {
             selectAnalysis(mostRecent)
+        } else {
+            // No analyses remain - reset to default yellow (matches ReaderViewModel behavior)
+            highlight.colorHex = "#FFEB3B"
+            try? modelContext.save()
         }
     }
 
@@ -202,8 +213,10 @@ final class HighlightAnalysisManager {
         // Single cleanup point: defer ensures job memory is freed on ANY exit path
         defer { jobManager.clearJob(jobId) }
 
-        // Check Task.isCancelled on each iteration to enable cancellation
-        // (e.g., when user navigates away during analysis)
+        // Poll until job reaches terminal state (.completed / .error)
+        // WARNING: Do NOT cancel polling tasks - the save guarantee below MUST execute.
+        // Cancelling would exit the loop → defer { clearJob } removes the job → API result lost.
+        // The activeJobId check handles UI isolation without cancellation.
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))  // Smoother streaming updates
 
@@ -229,7 +242,7 @@ final class HighlightAnalysisManager {
                         isAnalyzing = false
                     }
 
-                    // ALWAYS save, regardless of active status
+                    // ALWAYS save, regardless of active status - API tokens were spent
                     saveAnalysis(type: type, prompt: question ?? highlight.selectedText, response: result, isActiveJob: isActiveJob, modelId: job.modelId, usedWebSearch: job.webSearchEnabled)
                 }
 
@@ -257,8 +270,10 @@ final class HighlightAnalysisManager {
         // Single cleanup point: defer ensures job memory is freed on ANY exit path
         defer { jobManager.clearJob(jobId) }
 
-        // Check Task.isCancelled on each iteration to enable cancellation
-        // (e.g., when user navigates away during analysis)
+        // Poll until job reaches terminal state (.completed / .error)
+        // WARNING: Do NOT cancel polling tasks - the save guarantee below MUST execute.
+        // Cancelling would exit the loop → defer { clearJob } removes the job → API result lost.
+        // The activeJobId check handles UI isolation without cancellation.
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))  // Smoother streaming updates
 
@@ -285,7 +300,7 @@ final class HighlightAnalysisManager {
                         currentQuestion = ""
                     }
 
-                    // ALWAYS save, regardless of active status
+                    // ALWAYS save, regardless of active status - API tokens were spent
                     // Look up fresh analysis using captured ID
                     if let analysisId = analysisToFollowUpId {
                         // Analysis was selected - try to find it (might have been deleted)
@@ -336,13 +351,17 @@ final class HighlightAnalysisManager {
 
         analysis.highlight = highlight
         highlight.analyses.append(analysis)
-        highlight.colorHex = type.colorHex
+
+        // Only update highlight color for the active job (user's current intent)
+        // A background Fact Check completing should not overwrite Discussion's color
+        if isActiveJob {
+            highlight.colorHex = type.colorHex
+        }
 
         modelContext.insert(analysis)
         try? modelContext.save()
 
-        // Only update selectedAnalysis if this is the active job
-        // Prevents background job from hijacking UI when user is focused on new question
+        // Set selectedAnalysis after save - only for active job
         if isActiveJob {
             selectedAnalysis = analysis
         }

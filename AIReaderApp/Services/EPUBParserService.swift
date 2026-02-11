@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 import ZipArchive  // For EPUB extraction (EPUB is a ZIP file)
 
 /// Service responsible for parsing EPUB files
-@Observable
+/// Note: No @Observable needed - stateless service with no mutable stored properties
 final class EPUBParserService {
     // MARK: - Errors
     enum EPUBError: LocalizedError {

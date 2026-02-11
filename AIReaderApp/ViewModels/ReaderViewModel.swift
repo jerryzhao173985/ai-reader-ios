@@ -932,19 +932,20 @@ final class ReaderViewModel {
 
         // Update marker via JS injection (no page reload, preserves scroll & selection)
         // The highlight.analyses array is already updated in memory (reference type)
-        // Include colorHex so the highlight background updates to analysis type color
-        let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: type.colorHex)
+        // For background (non-active) jobs: update count but preserve current color
+        // Prevents a background Fact Check from overwriting the active Discussion's color
+        let markerColorHex = isActiveJob ? type.colorHex : highlight.colorHex
+        let markerUpdate = (highlightId: highlight.id, analysisCount: highlight.analyses.count, colorHex: markerColorHex)
 
         // If user has active text selection, defer EVERYTHING to avoid disrupting selection
         // This includes not updating colorHex in SwiftData (which would change hash → reload)
         if hasActiveTextSelection {
             pendingMarkerUpdatesQueue.append(markerUpdate)
             #if DEBUG
-            print("[SaveAnalysis] DEFERRED colorHex update for highlight \(highlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
+            print("[SaveAnalysis] DEFERRED marker update for highlight \(highlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
             #endif
-        } else {
-            // Guard: Only save if color actually changed (matches selectAnalysis() pattern)
-            // Prevents redundant DB write when analysis type matches existing color
+        } else if isActiveJob {
+            // Active job: update color in SwiftData and trigger marker update
             guard highlight.colorHex != type.colorHex else {
                 #if DEBUG
                 print("[SaveAnalysis] Color unchanged: \(type.colorHex) - skipping second save")
@@ -967,6 +968,12 @@ final class ReaderViewModel {
                 #endif
             }
             pendingMarkerUpdate = markerUpdate
+        } else {
+            // Background job: trigger marker count update only, preserve current color
+            pendingMarkerUpdate = markerUpdate
+            #if DEBUG
+            print("[SaveAnalysis] Background job - count update only for highlight \(highlight.id.uuidString.prefix(8))")
+            #endif
         }
     }
 
@@ -1203,25 +1210,32 @@ final class ReaderViewModel {
                                     }
 
                                     // Use same deferral logic as saveAnalysis() for colorHex and marker updates
-                                    let markerUpdate = (highlightId: freshHighlight.id, analysisCount: freshHighlight.analyses.count, colorHex: AnalysisType.customQuestion.colorHex)
+                                    // Background jobs: update count only, preserve current color
+                                    let markerColorHex = isActiveJob ? AnalysisType.customQuestion.colorHex : freshHighlight.colorHex
+                                    let markerUpdate = (highlightId: freshHighlight.id, analysisCount: freshHighlight.analyses.count, colorHex: markerColorHex)
                                     if hasActiveTextSelection {
                                         pendingMarkerUpdatesQueue.append(markerUpdate)
                                         #if DEBUG
-                                        print("[FollowUp] DEFERRED colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
+                                        print("[FollowUp] DEFERRED marker update for highlight \(freshHighlight.id.uuidString.prefix(8)) - hasActiveTextSelection=true")
                                         #endif
-                                    } else {
-                                        let oldColor = freshHighlight.colorHex
-                                        freshHighlight.colorHex = AnalysisType.customQuestion.colorHex
-                                        do {
-                                            try modelContext.save()
-                                            #if DEBUG
-                                            print("[FollowUp] IMMEDIATE colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)): \(oldColor) → \(AnalysisType.customQuestion.colorHex)")
-                                            #endif
-                                        } catch {
-                                            #if DEBUG
-                                            print("[FollowUp] ERROR saving colorHex for highlight \(freshHighlight.id.uuidString.prefix(8)): \(error)")
-                                            #endif
+                                    } else if isActiveJob {
+                                        if freshHighlight.colorHex != AnalysisType.customQuestion.colorHex {
+                                            let oldColor = freshHighlight.colorHex
+                                            freshHighlight.colorHex = AnalysisType.customQuestion.colorHex
+                                            do {
+                                                try modelContext.save()
+                                                #if DEBUG
+                                                print("[FollowUp] IMMEDIATE colorHex update for highlight \(freshHighlight.id.uuidString.prefix(8)): \(oldColor) → \(AnalysisType.customQuestion.colorHex)")
+                                                #endif
+                                            } catch {
+                                                #if DEBUG
+                                                print("[FollowUp] ERROR saving colorHex for highlight \(freshHighlight.id.uuidString.prefix(8)): \(error)")
+                                                #endif
+                                            }
                                         }
+                                        pendingMarkerUpdate = markerUpdate
+                                    } else {
+                                        // Background job: marker count update only
                                         pendingMarkerUpdate = markerUpdate
                                     }
                                     // Initial Q&A stored in prompt/response - no turn needed
