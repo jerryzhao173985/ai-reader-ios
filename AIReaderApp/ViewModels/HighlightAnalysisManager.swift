@@ -45,6 +45,7 @@ final class HighlightAnalysisManager {
         // Auto-select most recent analysis if any exist
         if let mostRecent = highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt }).first {
             self.selectedAnalysis = mostRecent
+            self.currentAnalysisType = mostRecent.analysisType
         }
     }
 
@@ -60,6 +61,7 @@ final class HighlightAnalysisManager {
         currentAnalysisType = type
         analysisResult = nil
         selectedAnalysis = nil  // Clear to show loading state
+        currentQuestion = ""    // Clear stale follow-up question (streamingAnalysisView always renders this)
 
         // Queue job synchronously - @MainActor class allows direct call without await
         // Job ID is returned immediately, no race condition with UI state
@@ -181,6 +183,25 @@ final class HighlightAnalysisManager {
         }
     }
 
+    /// Returns to the analysis cards list from expanded analysis or streaming view.
+    /// Called when user presses the Back button in HighlightDetailSheet.
+    ///
+    /// Unlike Reader's X button (protected by two-level gate: selectedHighlight + highlightToJobMap),
+    /// Library has only one gate (activeJobId). Must clear it so background jobs
+    /// save data but don't flip the UI back to analysis view.
+    func returnToAnalysisList() {
+        selectedAnalysis = nil
+        currentAnalysisType = nil
+        analysisResult = nil
+        isAnalyzing = false
+        currentQuestion = ""
+        activeJobId = nil
+
+        #if DEBUG
+        print("[HighlightAnalysisManager] Returned to analysis list")
+        #endif
+    }
+
     /// Prepares UI state for a new custom question thread
     /// Called when user clicks "Ask Question" button to start a fresh question
     ///
@@ -196,6 +217,7 @@ final class HighlightAnalysisManager {
         selectedAnalysis = nil
         currentAnalysisType = .customQuestion
         analysisResult = nil
+        isAnalyzing = false
         currentQuestion = ""
 
         // Clear active job so ongoing job doesn't update UI

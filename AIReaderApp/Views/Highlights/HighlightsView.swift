@@ -601,9 +601,7 @@ struct HighlightDetailSheet: View {
                     ToolbarItem(placement: .cancellationAction) {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
-                                manager?.selectedAnalysis = nil
-                                manager?.analysisResult = nil
-                                manager?.isAnalyzing = false
+                                manager?.returnToAnalysisList()
                             }
                         } label: {
                             HStack(spacing: 4) {
