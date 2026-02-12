@@ -152,6 +152,8 @@ final class HighlightAnalysisManager {
         currentAnalysisType = analysis.analysisType
         analysisResult = nil
         isAnalyzing = false
+        currentQuestion = ""
+        activeJobId = nil
 
         // Update highlight color to match analysis type (only save if changed)
         if highlight.colorHex != analysis.analysisType.colorHex {
@@ -160,27 +162,41 @@ final class HighlightAnalysisManager {
         }
     }
 
-    /// Delete an analysis
+    /// Delete a specific analysis from a highlight
+    /// Matches ReaderViewModel.deleteAnalysis() state cleanup pattern
     func deleteAnalysis(_ analysis: AIAnalysisModel) {
-        // Clear selection if deleting the selected one
-        if selectedAnalysis?.id == analysis.id {
+        let wasSelected = selectedAnalysis?.id == analysis.id
+
+        // Full state set cleared when deleting the selected analysis
+        // Matches Reader (ReaderViewModel:583-589) and returnToAnalysisList() patterns
+        if wasSelected {
             selectedAnalysis = nil
+            currentAnalysisType = nil
             analysisResult = nil
+            isAnalyzing = false
+            currentQuestion = ""
+            activeJobId = nil
         }
 
-        // Remove from highlight
+        // Remove from highlight and database
         highlight.analyses.removeAll { $0.id == analysis.id }
         modelContext.delete(analysis)
         try? modelContext.save()
 
-        // If analyses remain, select most recent
-        if let mostRecent = highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt }).first {
-            selectAnalysis(mostRecent)
-        } else {
-            // No analyses remain - reset to default yellow (matches ReaderViewModel behavior)
-            highlight.colorHex = "#FFEB3B"
-            try? modelContext.save()
+        // Auto-select next or reset color (only when selected was deleted)
+        if wasSelected {
+            if let mostRecent = highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt }).first {
+                selectAnalysis(mostRecent)
+            } else {
+                // No analyses remain - reset to default yellow (matches ReaderViewModel behavior)
+                highlight.colorHex = "#FFEB3B"
+                try? modelContext.save()
+            }
         }
+
+        #if DEBUG
+        print("[HighlightAnalysisManager] DELETED: \(analysis.analysisType.displayName) wasSelected=\(wasSelected) remaining=\(highlight.analyses.count)")
+        #endif
     }
 
     /// Returns to the analysis cards list from expanded analysis or streaming view.
