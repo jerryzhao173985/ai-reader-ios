@@ -773,6 +773,9 @@ struct HighlightDetailSheet: View {
         } else if let analysis = manager?.selectedAnalysis {
             // Show selected analysis with conversation
             expandedAnalysisView(analysis)
+        } else if let result = manager?.analysisResult, result.hasPrefix("Error:") {
+            // Error from failed analysis (matches Reader's AnalysisPanelView error display)
+            analysisErrorView(result)
         } else if highlight.analyses.isEmpty {
             // No analyses yet
             noAnalysesView
@@ -1115,6 +1118,32 @@ struct HighlightDetailSheet: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
+    }
+
+    // MARK: - Analysis Error View
+    /// Shows error from failed analysis - styled to match Reader's AnalysisPanelView resultView
+    private func analysisErrorView(_ result: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Error", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.orange)
+
+            Text(result.replacingOccurrences(of: "Error: ", with: ""))
+                .font(.subheadline)
+                .foregroundStyle(settings.theme.textColor.opacity(0.8))
+                .textSelection(.enabled)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.15))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
     }
 }
 
