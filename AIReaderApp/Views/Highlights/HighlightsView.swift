@@ -344,9 +344,25 @@ struct HighlightsView: View {
             for highlight in highlights.sorted(by: { $0.startOffset < $1.startOffset }) {
                 output += "> \(highlight.selectedText)\n\n"
 
-                for analysis in highlight.analyses {
+                for analysis in highlight.analyses.sorted(by: { $0.createdAt < $1.createdAt }) {
                     output += "**\(analysis.analysisType.displayName):**\n"
-                    output += "\(analysis.response)\n\n"
+
+                    if analysis.analysisType == .comment {
+                        // Comments store user text in prompt, response is empty
+                        output += "\(analysis.prompt)\n\n"
+                    } else if analysis.analysisType == .customQuestion {
+                        // Custom questions: include the question and the answer
+                        output += "*Q: \(analysis.prompt)*\n\(analysis.response)\n\n"
+                    } else {
+                        output += "\(analysis.response)\n\n"
+                    }
+
+                    // Include follow-up conversation turns
+                    if let thread = analysis.thread, !thread.turns.isEmpty {
+                        for turn in thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex }) {
+                            output += "*Follow-up: \(turn.question)*\n\(turn.answer)\n\n"
+                        }
+                    }
                 }
 
                 if let note = highlight.note, !note.isEmpty {
@@ -368,12 +384,27 @@ struct HighlightsView: View {
                 "chapterIndex": highlight.chapterIndex,
                 "createdAt": ISO8601DateFormatter().string(from: highlight.createdAt),
                 "note": highlight.note ?? "",
-                "analyses": highlight.analyses.map { analysis in
-                    [
+                "analyses": highlight.analyses.sorted(by: { $0.createdAt < $1.createdAt }).map { analysis -> [String: Any] in
+                    var dict: [String: Any] = [
                         "type": analysis.analysisType.rawValue,
+                        "prompt": analysis.prompt,
                         "response": analysis.response,
-                        "createdAt": ISO8601DateFormatter().string(from: analysis.createdAt)
+                        "createdAt": ISO8601DateFormatter().string(from: analysis.createdAt),
+                        "modelUsed": analysis.modelUsed,
+                        "usedWebSearch": analysis.usedWebSearch
                     ]
+
+                    if let thread = analysis.thread, !thread.turns.isEmpty {
+                        dict["followUps"] = thread.turns.sorted(by: { $0.turnIndex < $1.turnIndex }).map {
+                            [
+                                "question": $0.question,
+                                "answer": $0.answer,
+                                "turnIndex": $0.turnIndex
+                            ] as [String: Any]
+                        }
+                    }
+
+                    return dict
                 }
             ]
         }
@@ -970,11 +1001,14 @@ struct HighlightDetailSheet: View {
                 .foregroundStyle(settings.theme.textColor)
 
             ForEach(highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt })) { analysis in
-                AnalysisCard(analysis: analysis, settings: settings) {
+                AnalysisCard(analysis: analysis, settings: settings, onTap: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         manager?.selectAnalysis(analysis)
                     }
-                }
+                }, onDelete: {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    manager?.deleteAnalysis(analysis)
+                })
             }
         }
     }
@@ -1153,6 +1187,7 @@ struct AnalysisCard: View {
     let analysis: AIAnalysisModel
     let settings: SettingsManager
     let onTap: () -> Void
+    var onDelete: (() -> Void)? = nil
 
     private var typeColor: Color {
         Color(hex: analysis.analysisType.colorHex) ?? .blue
@@ -1168,57 +1203,78 @@ struct AnalysisCard: View {
     }
 
     var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Header
-                HStack {
-                    Image(systemName: analysis.analysisType.iconName)
-                        .font(.subheadline)
-                        .foregroundStyle(typeColor)
+        ZStack(alignment: .topTrailing) {
+            Button(action: onTap) {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Header
+                    HStack {
+                        Image(systemName: analysis.analysisType.iconName)
+                            .font(.subheadline)
+                            .foregroundStyle(typeColor)
 
-                    Text(analysis.analysisType.displayName)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(settings.theme.textColor)
+                        Text(analysis.analysisType.displayName)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(settings.theme.textColor)
 
-                    Spacer()
+                        Spacer()
 
-                    // Thread count badge if has follow-ups
-                    if let thread = analysis.thread, !thread.turns.isEmpty {
-                        Text("\(thread.turns.count)")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(typeColor)
-                            )
+                        // Thread count badge if has follow-ups
+                        if let thread = analysis.thread, !thread.turns.isEmpty {
+                            Text("\(thread.turns.count)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(typeColor)
+                                )
+                        }
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .padding(.trailing, onDelete != nil ? 16 : 0)
                     }
 
-                    Image(systemName: "chevron.right")
+                    // Preview of content (with markdown support)
+                    // Comments: show prompt (user's text), Others: show response (AI result)
+                    analysisPreviewText(analysis.analysisType == .comment ? analysis.prompt : analysis.response)
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
-
-                // Preview of content (with markdown support)
-                // Comments: show prompt (user's text), Others: show response (AI result)
-                analysisPreviewText(analysis.analysisType == .comment ? analysis.prompt : analysis.response)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(typeColor.opacity(0.15))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(typeColor.opacity(0.3), lineWidth: 1)
+                )
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(typeColor.opacity(0.15))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(typeColor.opacity(0.3), lineWidth: 1)
-            )
+            .buttonStyle(.plain)
+
+            // Delete button (X in top-right corner) - matches Reader's previousAnalysisCard pattern
+            if let onDelete {
+                Button {
+                    onDelete()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            Circle()
+                                .fill(settings.theme.secondaryBackgroundColor)
+                        )
+                }
+                .buttonStyle(.plain)
+                .offset(x: -6, y: 6)
+            }
         }
-        .buttonStyle(.plain)
     }
 }
 

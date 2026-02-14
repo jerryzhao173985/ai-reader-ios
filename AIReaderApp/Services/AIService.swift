@@ -839,7 +839,7 @@ final class AIService {
         return NonStreamingResult(
             content: content,
             modelId: config.model,
-            usedWebSearch: config.webSearchEnabled
+            usedWebSearch: false  // Chat Completions API does not support web search
         )
     }
 

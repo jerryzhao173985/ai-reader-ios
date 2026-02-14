@@ -183,15 +183,21 @@ final class HighlightAnalysisManager {
         modelContext.delete(analysis)
         try? modelContext.save()
 
-        // Auto-select next or reset color (only when selected was deleted)
+        // Auto-select next or reset color
         if wasSelected {
             if let mostRecent = highlight.analyses.sorted(by: { $0.createdAt > $1.createdAt }).first {
                 selectAnalysis(mostRecent)
             } else {
-                // No analyses remain - reset to default yellow (matches ReaderViewModel behavior)
+                // No analyses remain - reset to default yellow
                 highlight.colorHex = "#FFEB3B"
                 try? modelContext.save()
             }
+        } else if highlight.analyses.isEmpty {
+            // Deleted from cards list (selectedAnalysis was nil) and no analyses remain
+            // Must still reset color to default yellow — Reader can't hit this path
+            // (its X button can't delete the last analysis) but Library can
+            highlight.colorHex = "#FFEB3B"
+            try? modelContext.save()
         }
 
         #if DEBUG

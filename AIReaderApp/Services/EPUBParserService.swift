@@ -535,12 +535,29 @@ final class EPUBParserService {
             result = result.replacingOccurrences(of: entity, with: char)
         }
 
-        // Handle numeric entities
-        result = result.replacingOccurrences(
-            of: "&#([0-9]+);",
-            with: "",
-            options: .regularExpression
-        )
+        // Handle decimal numeric entities: &#8230; → … , &#160; → non-breaking space, etc.
+        while let range = result.range(of: "&#[0-9]+;", options: .regularExpression) {
+            let entity = String(result[range])
+            let numberStr = entity.dropFirst(2).dropLast(1)
+            if let codePoint = UInt32(numberStr),
+               let scalar = Unicode.Scalar(codePoint) {
+                result = result.replacingCharacters(in: range, with: String(Character(scalar)))
+            } else {
+                result = result.replacingCharacters(in: range, with: "")
+            }
+        }
+
+        // Handle hex numeric entities: &#x2026; → … , &#xA0; → non-breaking space, etc.
+        while let range = result.range(of: "&#[xX][0-9a-fA-F]+;", options: .regularExpression) {
+            let entity = String(result[range])
+            let hexStr = entity.dropFirst(3).dropLast(1)
+            if let codePoint = UInt32(hexStr, radix: 16),
+               let scalar = Unicode.Scalar(codePoint) {
+                result = result.replacingCharacters(in: range, with: String(Character(scalar)))
+            } else {
+                result = result.replacingCharacters(in: range, with: "")
+            }
+        }
 
         return result
     }
